@@ -1,0 +1,9 @@
+openai>=1.0.0
+whisper
+pydub
+click
+python-dotenv
+requests
+transformers
+torch
+torchaudio
