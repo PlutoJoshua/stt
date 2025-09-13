@@ -17,7 +17,7 @@ class TextSummarizer:
             print("로컬 요약 모델을 로딩 중...")
             self.local_summarizer = pipeline(
                 "summarization",
-                model="facebook/bart-large-cnn",
+                model="eenzeenee/t5-small-korean-summarization",
                 device=-1  # CPU 사용
             )
     

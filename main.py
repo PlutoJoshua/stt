@@ -40,7 +40,7 @@ def process_audio(audio_file, output_dir, summary_type, stt_method, summarize_me
         base_name = f"{audio_path.stem}_{timestamp}"
         
         transcript_file = Path(output_dir) / f"{base_name}_transcript.txt"
-        summary_file = Path(output_dir) / f"{base_name}_summary.txt"
+        summary_file = Path(output_dir) / f"{base_name}_summary.md" # 확장자 .md로 변경
         
         print(f"🎵 오디오 파일 처리 시작: {audio_file}")
         
@@ -100,18 +100,31 @@ def process_audio(audio_file, output_dir, summary_type, stt_method, summarize_me
             else:
                 summary = summarizer.summarize(transcript, summary_type)
             
+            # 마크다운 형식으로 요약 내용 구성
+            md_summary = f"""# 📝 음성 기록 요약
+
+## 🎙️ 원본 오디오 파일
+- **파일:** `{os.path.basename(audio_file)}`
+- **길이:** `{audio_info['duration_formatted']}`
+
+## 📜 요약 내용
+{summary}
+
+---
+*요약 생성 시간: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}*
+"""
             # 요약 저장
-            summarizer.save_summary(summary, summary_file)
+            summarizer.save_summary(md_summary, summary_file)
             print(f"📋 요약 완료: {summary_file}")
             
             # 결과 미리보기
-            print("\\n" + "="*50)
+            print("\n" + "="*50)
             print("📄 요약 결과 미리보기:")
             print("="*50)
             print(summary[:500] + ("..." if len(summary) > 500 else ""))
             print("="*50)
         
-        print(f"\\n✅ 처리 완료!")
+        print(f"\n✅ 처리 완료!")
         print(f"📁 출력 디렉토리: {output_dir}")
         
     except Exception as e:
@@ -132,7 +145,7 @@ def info():
     print(f"  요약 방법: {config.SUMMARIZE_METHOD}")
     print(f"  OpenAI API 키: {'설정됨' if config.OPENAI_API_KEY else '미설정'}")
     
-    print("\\n📋 사용 가능한 방법:")
+    print("\n📋 사용 가능한 방법:")
     
     # STT 방법 확인
     try:
@@ -150,7 +163,7 @@ def info():
     except Exception as e:
         print(f"  요약: 확인 실패 ({str(e)})")
     
-    print(f"\\n🎵 지원 오디오 형식: {', '.join(config.SUPPORTED_AUDIO_FORMATS)}")
+    print(f"\n🎵 지원 오디오 형식: {', '.join(config.SUPPORTED_AUDIO_FORMATS)}")
 
 # 기본 명령어를 process_audio로 설정
 if __name__ == '__main__':

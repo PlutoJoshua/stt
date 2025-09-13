@@ -8,7 +8,7 @@ class AudioProcessor:
         self.supported_formats = config.SUPPORTED_AUDIO_FORMATS
         self.max_size_mb = config.MAX_FILE_SIZE_MB
     
-    def validate_file(self, file_path):
+    def validate_file(self, file_path, check_size=True):
         """오디오 파일 유효성 검사"""
         if not os.path.exists(file_path):
             raise FileNotFoundError(f"파일을 찾을 수 없습니다: {file_path}")
@@ -17,9 +17,10 @@ class AudioProcessor:
         if file_ext not in self.supported_formats:
             raise ValueError(f"지원하지 않는 파일 형식입니다. 지원 형식: {self.supported_formats}")
         
-        file_size_mb = os.path.getsize(file_path) / (1024 * 1024)
-        if file_size_mb > self.max_size_mb:
-            raise ValueError(f"파일 크기가 너무 큽니다. 최대 크기: {self.max_size_mb}MB")
+        if check_size:
+            file_size_mb = os.path.getsize(file_path) / (1024 * 1024)
+            if file_size_mb > self.max_size_mb:
+                raise ValueError(f"파일 크기가 너무 큽니다. 최대 크기: {self.max_size_mb}MB")
         
         return True
     
@@ -77,7 +78,7 @@ class AudioProcessor:
     
     def split_audio(self, file_path, chunk_duration_minutes=10):
         """긴 오디오 파일을 작은 청크로 분할"""
-        self.validate_file(file_path)
+        self.validate_file(file_path, check_size=False)
         
         try:
             audio = AudioSegment.from_file(file_path)

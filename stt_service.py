@@ -16,7 +16,7 @@ class STTService:
             self.openai_client = openai.OpenAI(api_key=config.OPENAI_API_KEY)
         elif self.method == 'whisper_local':
             print("로컬 Whisper 모델을 로딩 중...")
-            self.whisper_model = whisper.load_model("base")
+            self.whisper_model = whisper.load_model("medium")
     
     def transcribe_with_api(self, audio_file):
         """OpenAI Whisper API를 사용한 음성 인식"""

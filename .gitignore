@@ -4,6 +4,7 @@
 .vscode/
 #Cache folder
 .alcache/
+**/__pycache__
 #Symbols folder
 .alpackages/
 #Snapshots folder
@@ -24,3 +25,6 @@ TestResults.xml
 .env
 .env.example
 /stt
+/output
+#Voice file
+**Voice**
