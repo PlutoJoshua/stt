@@ -7,7 +7,8 @@
 - 🎵 **다양한 오디오 형식 지원**: MP3, MP4, WAV, M4A, FLAC, OGG
 - 🔊 **음성-텍스트 변환 (STT)**:
   - OpenAI Whisper API (유료, 고품질)
-  - 로컬 Whisper 모델 (무료)
+  - 로컬 Whisper 모델 (무료, CPU/GPU)
+  - VLLM을 이용한 고속 GPU 추론 (무료, NVIDIA GPU 필요)
 - 📝 **텍스트 요약**:
   - OpenAI GPT API (유료, 고품질)
   - 로컬 BART 모델 (무료)
@@ -37,7 +38,7 @@ cp .env.example .env
 `.env` 파일을 편집하여 API 키와 설정을 구성:
 ```env
 OPENAI_API_KEY=your_openai_api_key_here
-STT_METHOD=whisper_local  # whisper_api, whisper_local
+STT_METHOD=whisper_local  # whisper_api, whisper_local, vllm
 SUMMARIZE_METHOD=openai_api  # openai_api, local_model, ollama
 ```
 
@@ -66,8 +67,9 @@ python run.py lecture.m4a --bullet-points
 # 요약하지 않고 텍스트 변환만
 python run.py interview.wav --no-summary
 
-# STT 방법 지정
+# STT 방법 지정 (API, 로컬, VLLM)
 python run.py recording.mp3 -s whisper_api
+python run.py recording.mp3 -s vllm
 
 # 요약 방법 지정
 python run.py recording.mp3 -m local_model
@@ -128,18 +130,23 @@ sudo apt update
 sudo apt install ffmpeg
 ```
 
+### GPU 사용 (로컬 Whisper)
+CUDA 지원 PyTorch 설치:
+```bash
+pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
+```
+
+### VLLM 사용 시 (NVIDIA GPU)
+`vllm`은 NVIDIA GPU 환경에서 고속 추론을 지원합니다. `requirements.txt`에 포함된 `vllm` 패키지를 설치해야 합니다.
+
+**참고:** 현재 `vllm`을 사용한 변환 기능(`transcribe_with_vllm`)은 실제 추론 로직이 구현되어 있지 않은 상태입니다. `vllm-whisper`와 같은 특화된 라이브러리의 API에 맞춰 `stt_service.py` 파일의 해당 함수를 직접 구현해야 정상적으로 동작합니다.
+
 ### Ollama 사용 시
 ```bash
 # Ollama 설치 및 모델 다운로드
 curl -fsSL https://ollama.ai/install.sh | sh
 ollama pull llama2
 ollama serve
-```
-
-### GPU 사용 (로컬 Whisper)
-CUDA 지원 PyTorch 설치:
-```bash
-pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
 ```
 
 ## 라이선스

@@ -7,3 +7,4 @@ requests
 transformers
 torch
 torchaudio
+vllm

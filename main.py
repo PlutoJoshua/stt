@@ -18,7 +18,7 @@ import config
               default='general',
               help='요약 유형 (기본값: general)')
 @click.option('--stt-method', '-s',
-              type=click.Choice(['whisper_api', 'whisper_local']),
+              type=click.Choice(['whisper_api', 'whisper_local', 'vllm']),
               help='STT 방법 (기본값: 설정파일 값)')
 @click.option('--summarize-method', '-m',
               type=click.Choice(['openai_api', 'local_model', 'ollama']),
@@ -69,11 +69,9 @@ def process_audio(audio_file, output_dir, summary_type, stt_method, summarize_me
             processed_files = [converted_file]
         
         # 2. 음성 인식 (STT)
-        stt_service = STTService()
-        
-        # STT 방법 설정
-        if stt_method:
-            stt_service.method = stt_method
+        # CLI 옵션 > 설정 파일 순으로 STT 방법을 결정
+        final_stt_method = stt_method if stt_method else config.STT_METHOD
+        stt_service = STTService(method=final_stt_method)
         
         if len(processed_files) == 1:
             transcript = stt_service.transcribe(processed_files[0])
