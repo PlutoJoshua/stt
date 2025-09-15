@@ -1,5 +1,5 @@
 openai>=1.0.0
-whisper
+openai-whisper
 pydub
 click
 python-dotenv
@@ -7,4 +7,4 @@ requests
 transformers
 torch
 torchaudio
-vllm
+google-generativeai

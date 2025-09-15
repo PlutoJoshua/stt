@@ -4,12 +4,6 @@ import whisper
 from pathlib import Path
 import config
 
-# vllm 추가
-try:
-    from vllm import LLM, SamplingParams
-except ImportError:
-    LLM = None
-
 class STTService:
     def __init__(self, method=None):
         if method:
@@ -19,7 +13,6 @@ class STTService:
         
         self.openai_client = None
         self.whisper_model = None
-        self.vllm_model = None
 
         print(f"STT 서비스 초기화 (방법: {self.method})")
 
@@ -28,13 +21,8 @@ class STTService:
                 raise ValueError("OpenAI API 키가 설정되지 않았습니다.")
             self.openai_client = openai.OpenAI(api_key=config.OPENAI_API_KEY)
         elif self.method == 'whisper_local':
-            print("로컬 Whisper 모델을 로딩 중...")
-            self.whisper_model = whisper.load_model("medium")
-        elif self.method == 'vllm':
-            if LLM is None:
-                raise ImportError("vllm 라이브러리가 설치되지 않았습니다. 'pip install vllm'으로 설치해주세요.")
-            print("VLLM Whisper 모델을 로딩 중... (GPU 필요)")
-            self.vllm_model = LLM(model="openai/whisper-large-v3", trust_remote_code=True)
+            print("로컬 Whisper 모델(large-v3)을 로딩 중... (CPU)")
+            self.whisper_model = whisper.load_model("large-v3")
 
     def transcribe_with_api(self, audio_file):
         """OpenAI Whisper API를 사용한 음성 인식"""
@@ -43,7 +31,7 @@ class STTService:
                 transcript = self.openai_client.audio.transcriptions.create(
                     model="whisper-1",
                     file=file,
-                    language="ko"  # 한국어로 설정
+                    language="ko"
                 )
             return transcript.text
         except Exception as e:
@@ -52,20 +40,13 @@ class STTService:
     def transcribe_with_local(self, audio_file):
         """로컬 Whisper 모델을 사용한 음성 인식"""
         try:
+            if self.whisper_model is None:
+                raise RuntimeError("로컬 Whisper 모델이 초기화되지 않았습니다.")
+            print("CPU로 음성 인식 중...")
             result = self.whisper_model.transcribe(audio_file, language="ko")
             return result["text"]
         except Exception as e:
             raise RuntimeError(f"로컬 Whisper 음성 인식 실패: {str(e)}")
-
-    def transcribe_with_vllm(self, audio_file):
-        """VLLM을 사용한 고속 음성 인식 (구현 필요)"""
-        # vllm의 기본 LLM 엔진은 텍스트용입니다. 오디오 처리를 위해서는 vllm-whisper와 같은
-        # 특화된 라이브러리나 커스텀 오디오 파이프라인 구현이 필요합니다.
-        # 아래는 향후 해당 라이브러리의 API에 맞춰 구현해야 할 부분을 명시합니다.
-        raise NotImplementedError(
-            "VLLM을 사용한 Whisper 추론은 아직 구현되지 않았습니다. "
-            "vllm-whisper와 같은 특화 라이브러리의 API에 맞춰 이 함수를 완성해야 합니다."
-        )
 
     def transcribe(self, audio_file):
         """설정된 방법에 따라 음성을 텍스트로 변환"""
@@ -78,25 +59,8 @@ class STTService:
             return self.transcribe_with_api(audio_file)
         elif self.method == 'whisper_local':
             return self.transcribe_with_local(audio_file)
-        elif self.method == 'vllm':
-            return self.transcribe_with_vllm(audio_file)
         else:
             raise ValueError(f"지원하지 않는 STT 방법: {self.method}")
-
-    def transcribe_chunks(self, chunk_files):
-        """여러 오디오 청크를 순차적으로 음성 인식"""
-        all_text = []
-
-        for i, chunk_file in enumerate(chunk_files, 1):
-            print(f"청크 {i}/{len(chunk_files)} 처리 중...")
-            text = self.transcribe(chunk_file)
-            all_text.append(text)
-
-            # 임시 파일 정리
-            if os.path.exists(chunk_file):
-                os.remove(chunk_file)
-
-        return " ".join(all_text)
 
     def save_transcript(self, text, output_file):
         """변환된 텍스트를 파일로 저장"""
@@ -109,14 +73,7 @@ class STTService:
 
     def get_available_methods(self):
         """사용 가능한 STT 방법 반환"""
-        methods = []
-
+        methods = ['whisper_local']
         if config.OPENAI_API_KEY:
             methods.append('whisper_api')
-
-        methods.append('whisper_local')
-        
-        if LLM is not None:
-            methods.append('vllm')
-
         return methods
