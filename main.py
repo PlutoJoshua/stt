@@ -32,30 +32,24 @@ def process_audio(audio_file, output_dir, summary_type, stt_method, summarize_me
     """음성 파일을 텍스트로 변환하고 요약하는 프로그램"""
     
     try:
-        # 출력 디렉토리 생성
         os.makedirs(output_dir, exist_ok=True)
-        
-        # 파일명 기반 출력 파일 경로
         audio_path = Path(audio_file)
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         base_name = f"{audio_path.stem}_{timestamp}"
-        
         transcript_file = Path(output_dir) / f"{base_name}_transcript.txt"
         summary_file = Path(output_dir) / f"{base_name}_summary.md"
         
         print(f"🎵 오디오 파일 처리 시작: {audio_file}")
         
-        # 1. 오디오 파일 처리
         audio_processor = AudioProcessor()
         audio_info = audio_processor.get_audio_info(audio_file)
         print(f"📊 파일 정보: {audio_info['duration_formatted']}, "
               f"{audio_info['file_size_mb']:.1f}MB, "
               f"{audio_info['channels']}채널, {audio_info['frame_rate']}Hz")
         
-        converted_wav_file = audio_processor.convert_to_wav(audio_file)
-        
-        # 2. 음성 인식 (STT)
         final_stt_method = stt_method if stt_method else config.STT_METHOD
+        converted_wav_file = audio_processor.convert_to_wav(audio_file, stt_method=final_stt_method)
+        
         stt_service = STTService(method=final_stt_method)
         transcript = stt_service.transcribe(converted_wav_file)
         
@@ -65,9 +59,7 @@ def process_audio(audio_file, output_dir, summary_type, stt_method, summarize_me
         stt_service.save_transcript(transcript, transcript_file)
         print(f"📝 텍스트 변환 완료: {transcript_file}")
         
-        # 3. 텍스트 요약 (옵션)
         if not no_summary:
-            # 컨텍스트 파일 읽기
             context_text = None
             if context_file:
                 with open(context_file, 'r', encoding='utf-8') as f:
@@ -142,7 +134,7 @@ def info():
     except Exception as e:
         print(f"  요약: 확인 실패 ({str(e)})")
     
-    print(f"\n🎵 지원 오디오 형식: {', '.join(config.SUPPORTED_AUDIO_FORMATS)}")
+    print(f"\n🎵 지원 오디오 형식: {config.SUPPORTED_AUDIO_FORMATS}")
 
 if __name__ == '__main__':
     cli.add_command(process_audio, name='process')

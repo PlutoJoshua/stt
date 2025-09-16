@@ -24,9 +24,11 @@ class AudioProcessor:
         
         return True
     
-    def convert_to_wav(self, input_path, output_path=None):
+    def convert_to_wav(self, input_path, output_path=None, stt_method=None):
         """오디오 파일을 WAV 형식으로 변환"""
-        self.validate_file(input_path)
+        # API를 사용할 때만 파일 크기 검사
+        check_size_flag = True if stt_method == 'whisper_api' else False
+        self.validate_file(input_path, check_size=check_size_flag)
         
         if output_path is None:
             input_file = Path(input_path)
@@ -57,7 +59,8 @@ class AudioProcessor:
     
     def get_audio_info(self, file_path):
         """오디오 파일 정보 반환"""
-        self.validate_file(file_path)
+        # API 사용 여부와 관계없이 파일 유효성만 검사 (크기 제외)
+        self.validate_file(file_path, check_size=False)
         
         try:
             audio = AudioSegment.from_file(file_path)

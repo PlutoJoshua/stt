@@ -1,4 +1,3 @@
-print("---" + " EXECUTING LATEST SUMMARIZER.PY ---")
 import openai
 import requests
 import google.generativeai as genai
@@ -30,19 +29,19 @@ class TextSummarizer:
             self.local_summarizer = pipeline(
                 "summarization",
                 model="eenzeenee/t5-small-korean-summarization",
-                device=-1  # CPU 사용
+                device=-1
             )
 
     def summarize_with_openai(self, text, summary_type="general", context=None):
         """OpenAI API를 사용한 텍스트 요약"""
         try:
             system_prompts = {
-                "general": "다음 텍스트를 간결하고 명확하게 요약해주세요.",
-                "meeting": "다음 회의 내용을 요약해주세요. 주요 논의사항, 결정사항, 액션 아이템을 중심으로 정리해주세요.",
+                "general": "다음 텍스트를 명확하게 요약해주세요.",
+                "meeting": "다음 회의 내용을 자세히 요약해주세요. 주요 논의사항, 결정사항, 액션 아이템을 중심으로 정리해주세요.",
                 "lecture": "다음 강의 내용을 요약해주세요. 핵심 개념, 중요한 설명, 예시를 중심으로 정리해주세요.",
                 "interview": "다음 인터뷰 내용을 요약해주세요. 주요 질문과 답변, 핵심 내용을 중심으로 정리해주세요."
             }
-            instruction = system_prompts.get(summary_type, system_prompts["general"])
+            instruction = system_prompts.get(summary_type, system_prompts["meeting"])
             
             system_content = f"{instruction}"
             if context:
@@ -54,7 +53,7 @@ class TextSummarizer:
                     {"role": "system", "content": system_content},
                     {"role": "user", "content": text}
                 ],
-                max_tokens=1000,
+                max_tokens=1500, # OpenAI는 max_tokens 지정이 안정적
                 temperature=0.3
             )
             return response.choices[0].message.content
@@ -65,12 +64,12 @@ class TextSummarizer:
         """Gemini API를 사용한 텍스트 요약"""
         try:
             system_prompts = {
-                "general": "다음 텍스트를 한국어로 간결하고 명확하게 요약해주세요. 주요 내용과 핵심 포인트를 중심으로 정리해주세요.",
-                "meeting": "다음 회의 내용을 한국어로 요약해주세요. 주요 논의사항, 결정사항, 액션 아이템을 중심으로 정리해주세요.",
-                "lecture": "다음 강의 내용을 한국어로 요약해주세요. 핵심 개념, 중요한 설명, 예시를 중심으로 정리해주세요.",
-                "interview": "다음 인터뷰 내용을 한국어로 요약해주세요. 주요 질문과 답변, 핵심 내용을 중심으로 정리해주세요."
+                "general": "다음 텍스트를 명확하게 요약해주세요.",
+                "meeting": "다음 회의 내용을 자세히 요약해주세요. 주요 논의사항, 결정사항, 액션 아이템을 중심으로 정리해주세요.",
+                "lecture": "다음 강의 내용을 요약해주세요. 핵심 개념, 중요한 설명, 예시를 중심으로 정리해주세요.",
+                "interview": "다음 인터뷰 내용을 요약해주세요. 주요 질문과 답변, 핵심 내용을 중심으로 정리해주세요."
             }
-            instruction = system_prompts.get(summary_type, system_prompts["general"])
+            instruction = system_prompts.get(summary_type, system_prompts["meeting"])
             
             prompt_parts = [f"[요약 지시]\n{instruction}"]
             if context:
@@ -79,9 +78,24 @@ class TextSummarizer:
             prompt_parts.append(f"\n\n--- 요약할 텍스트 시작 ---\n{text}\n--- 요약할 텍스트 끝 ---")
             
             prompt = "\n".join(prompt_parts)
-            response = self.gemini_model.generate_content(prompt)
+            
+            safety_settings = [
+                {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
+                {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},
+                {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_NONE"},
+                {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"},
+            ]
+
+            response = self.gemini_model.generate_content(
+                prompt, 
+                safety_settings=safety_settings
+            )
             return response.text
         except Exception as e:
+            if hasattr(response, 'prompt_feedback') and response.prompt_feedback.block_reason:
+                 raise RuntimeError(f"Gemini 요약 실패: 프롬프트가 안전 설정에 의해 차단되었습니다. Reason: {response.prompt_feedback.block_reason}")
+            if not response.parts:
+                 raise RuntimeError(f"Gemini 요약 실패: 모델이 생성한 결과가 비어있습니다. Finish Reason: {response.candidates[0].finish_reason}")
             raise RuntimeError(f"Gemini 요약 실패: {str(e)}")
 
     def summarize_with_local(self, text):
@@ -92,7 +106,7 @@ class TextSummarizer:
             summaries = []
             for chunk in chunks:
                 if len(chunk.strip()) > 50:
-                    summary = self.local_summarizer(chunk, max_length=150, min_length=30, do_sample=False)
+                    summary = self.local_summarizer(chunk, max_length=200, min_length=30, do_sample=False)
                     summaries.append(summary[0]['summary_text'])
             return " ".join(summaries)
         except Exception as e:
@@ -102,11 +116,7 @@ class TextSummarizer:
         """Ollama 로컬 LLM을 사용한 텍스트 요약"""
         try:
             url = "http://localhost:11434/api/generate"
-            data = {
-                "model": model_name,
-                "prompt": f"다음 텍스트를 간결하고 명확하게 요약해주세요:\\n\\n{text}",
-                "stream": False
-            }
+            data = {"model": model_name, "prompt": f"다음 텍스트를 간결하고 명확하게 요약해주세요:\n\n{text}", "stream": False}
             response = requests.post(url, json=data)
             response.raise_for_status()
             return response.json()['response']
@@ -122,7 +132,7 @@ class TextSummarizer:
         if self.method == 'none':
             return "요약 방법이 'none'으로 설정되어 요약을 건너뜁니다."
 
-        self._initialize_client() # 필요한 클라이언트 초기화
+        self._initialize_client()
         print(f"텍스트 요약 시작 ({self.method})...")
         
         if self.method == 'openai_api':
@@ -148,10 +158,7 @@ class TextSummarizer:
             try:
                 response = self.openai_client.chat.completions.create(
                     model="gpt-3.5-turbo",
-                    messages=[
-                        {"role": "system", "content": system_content},
-                        {"role": "user", "content": text}
-                    ],
+                    messages=[{"role": "system", "content": system_content}, {"role": "user", "content": text}],
                     max_tokens=800, temperature=0.3)
                 return response.choices[0].message.content
             except Exception as e:
@@ -164,9 +171,19 @@ class TextSummarizer:
             prompt_parts.append(f"\n\n--- 텍스트 시작 ---\n{text}\n--- 텍스트 끝 ---")
             prompt = "\n".join(prompt_parts)
             try:
-                response = self.gemini_model.generate_content(prompt)
+                safety_settings = [
+                    {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
+                    {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},
+                    {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_NONE"},
+                    {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"},
+                ]
+                response = self.gemini_model.generate_content(prompt, safety_settings=safety_settings)
                 return response.text
             except Exception as e:
+                if hasattr(response, 'prompt_feedback') and response.prompt_feedback.block_reason:
+                    raise RuntimeError(f"Gemini 불릿 포인트 생성 실패: 프롬프트가 안전 설정에 의해 차단되었습니다. Reason: {response.prompt_feedback.block_reason}")
+                if not response.parts:
+                    raise RuntimeError(f"Gemini 불릿 포인트 생성 실패: 모델이 생성한 결과가 비어있습니다. Finish Reason: {response.candidates[0].finish_reason}")
                 raise RuntimeError(f"Gemini 불릿 포인트 생성 실패: {str(e)}")
         else:
             return self.summarize(text, context=context)
@@ -187,12 +204,10 @@ class TextSummarizer:
             methods.append('openai_api')
         if config.GOOGLE_API_KEY:
             methods.append('gemini_api')
-        
         try:
             response = requests.get("http://localhost:11434/api/tags", timeout=2)
             if response.status_code == 200:
                 methods.append('ollama')
         except:
             pass
-        
         return methods
