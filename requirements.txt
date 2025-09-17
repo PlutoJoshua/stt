@@ -8,3 +8,7 @@ transformers
 torch
 torchaudio
 google-generativeai
+pyannote.audio
+pнаяtorch-lightning
+torchmetrics
+huggingface_hub
