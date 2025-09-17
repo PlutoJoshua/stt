@@ -28,7 +28,9 @@ class STTService:
         
         elif self.method in ['whisper_local', 'whisper_local_diarize']:
             print("로컬 Whisper 모델(large-v3)을 로딩 중...")
-            device = "cuda" if torch.cuda.is_available() else "cpu"
+            # Temporarily forcing CPU to avoid MPS sparse tensor bug
+            device = "cpu"
+
             self.whisper_model = whisper.load_model("large-v3", device=device)
             print(f"Whisper 모델이 {device}에 로드되었습니다.")
 
@@ -36,15 +38,14 @@ class STTService:
                 if not config.HUGGING_FACE_TOKEN:
                     raise ValueError("Hugging Face 인증 토큰이 설정되지 않았습니다. .env 파일에 HUGGING_FACE_TOKEN을 추가해주세요.")
                 
-                # Hugging Face 토큰 저장 및 API 클라이언트 초기화
                 HfFolder.save_token(config.HUGGING_FACE_TOKEN)
                 
                 print("Pyannote-audio 화자 분리 파이프라인을 로딩 중...")
                 pipeline_name = "pyannote/speaker-diarization-3.1"
                 self.diarization_pipeline = Pipeline.from_pretrained(pipeline_name, use_auth_token=config.HUGGING_FACE_TOKEN)
-                if torch.cuda.is_available():
-                    self.diarization_pipeline.to(torch.device("cuda"))
-                print("화자 분리 파이프라인 로딩 완료.")
+                # Forcing to CPU as well for stability
+                self.diarization_pipeline.to(torch.device(device))
+                print(f"화자 분리 파이프라인이 {device}에 로드되었습니다.")
 
     def transcribe_with_api(self, audio_file):
         """OpenAI Whisper API를 사용한 음성 인식"""

@@ -1,0 +1,243 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>음성 파일 변환 및 요약</title>
+    <!-- Bootstrap CSS -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        body { background-color: #f0f2f5; }
+        .container { max-width: 900px; }
+        .drop-zone { border: 2px dashed #0d6efd; background-color: #f8f9fa; }
+        .drop-zone.dragover { background-color: #e9ecef; }
+        .form-label { font-weight: 600; }
+        #result-summary img, #result-summary video { max-width: 100%; height: auto; }
+    </style>
+</head>
+<body>
+    <div class="container my-5">
+        <div class="card shadow-sm">
+            <div class="card-body p-5">
+                <h1 class="card-title text-center mb-4">음성 파일 변환 및 요약</h1>
+                
+                <form id="upload-form">
+                    <div id="drop-zone" class="drop-zone p-5 text-center rounded mb-4" role="button">
+                        <span class="drop-zone__prompt text-muted">오디오 파일을 이곳에 드래그 앤 드롭하거나 클릭하여 선택하세요.</span>
+                        <input type="file" name="audio_file" id="audio_file" class="d-none" accept=".mp3,.mp4,.wav,.m4a,.flac,.ogg">
+                    </div>
+
+                    <div class="row g-3 mb-4">
+                        <div class="col-md-6">
+                            <label for="stt-method" class="form-label">STT 방법</label>
+                            <select id="stt-method" name="stt_method" class="form-select">
+                                {% for method in stt_methods %}
+                                <option value="{{ method }}"> {{ method }} </option>
+                                {% endfor %}
+                            </select>
+                        </div>
+                        <div class="col-md-6">
+                            <label for="summarize-method" class="form-label">요약 방법</label>
+                            <select id="summarize-method" name="summarize_method" class="form-select">
+                                {% for method in summarize_methods %}
+                                <option value="{{ method }}"> {{ method }} </option>
+                                {% endfor %}
+                            </select>
+                        </div>
+                        <div class="col-md-6">
+                            <label for="summary-type" class="form-label">요약 유형</label>
+                            <select id="summary-type" name="summary_type" class="form-select">
+                                <option value="general">일반</option>
+                                <option value="meeting">회의</option>
+                                <option value="lecture">강의</option>
+                                <option value="interview">인터뷰</option>
+                            </select>
+                        </div>
+                        <div class="col-md-6">
+                            <label for="other-options" class="form-label">기타 옵션</label>
+                            <select id="other-options" name="other_options" class="form-select">
+                                <option value="summary">일반 요약</option>
+                                <option value="bullet_points">불릿 포인트 요약</option>
+                                <option value="no_summary">요약 안함</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <div class="d-grid">
+                        <button type="submit" id="submit-button" class="btn btn-primary btn-lg">
+                            <span id="submit-button-text">처리 시작</span>
+                            <span id="submit-spinner" class="spinner-border spinner-border-sm d-none" role="status" aria-hidden="true"></span>
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+
+        <div id="status-container" class="card shadow-sm mt-4 d-none">
+            <div class="card-body">
+                <h2 class="card-title">처리 상태</h2>
+                <div id="status-list" class="list-group"></div>
+            </div>
+        </div>
+
+        <div id="result-container" class="card shadow-sm mt-4 d-none">
+            <div class="card-header">
+                <h2 class="mb-0">처리 결과</h2>
+            </div>
+            <div id="result-card" class="card-body"></div>
+        </div>
+    </div>
+
+    <!-- Bootstrap JS -->
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        const dropZone = document.getElementById('drop-zone');
+        const fileInput = document.getElementById('audio_file');
+        const form = document.getElementById('upload-form');
+        const submitButton = document.getElementById('submit-button');
+        const submitButtonText = document.getElementById('submit-button-text');
+        const submitSpinner = document.getElementById('submit-spinner');
+        const statusContainer = document.getElementById('status-container');
+        const statusList = document.getElementById('status-list');
+        const resultContainer = document.getElementById('result-container');
+        const resultCard = document.getElementById('result-card');
+
+        // Drag and Drop
+        dropZone.addEventListener('click', () => fileInput.click());
+        dropZone.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            dropZone.classList.add('dragover');
+        });
+        dropZone.addEventListener('dragleave', () => dropZone.classList.remove('dragover'));
+        dropZone.addEventListener('drop', (e) => {
+            e.preventDefault();
+            dropZone.classList.remove('dragover');
+            if (e.dataTransfer.files.length) {
+                fileInput.files = e.dataTransfer.files;
+                updateDropZonePrompt();
+            }
+        });
+        fileInput.addEventListener('change', updateDropZonePrompt);
+
+        function updateDropZonePrompt() {
+            const prompt = dropZone.querySelector('.drop-zone__prompt');
+            if (fileInput.files.length > 0) {
+                prompt.textContent = `선택된 파일: ${fileInput.files[0].name}`;
+            } else {
+                prompt.textContent = '오디오 파일을 이곳에 드래그 앤 드롭하거나 클릭하여 선택하세요.';
+            }
+        }
+
+        // Form Submission
+        form.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            if (fileInput.files.length === 0) {
+                alert('오디오 파일을 선택해주세요.');
+                return;
+            }
+
+            // Reset UI
+            submitButton.disabled = true;
+            submitButtonText.textContent = '처리 중...';
+            submitSpinner.classList.remove('d-none');
+            statusContainer.classList.remove('d-none');
+            resultContainer.classList.add('d-none');
+            statusList.innerHTML = '<div class="list-group-item">업로드를 시작합니다...</div>';
+            resultCard.innerHTML = '';
+
+            const formData = new FormData(form);
+            const otherOptions = document.getElementById('other-options').value;
+            if (otherOptions === 'bullet_points') formData.append('bullet_points', 'true');
+            if (otherOptions === 'no_summary') formData.append('no_summary', 'true');
+
+            try {
+                const processResponse = await fetch('/process', { method: 'POST', body: formData });
+                if (!processResponse.ok) {
+                    const errorResult = await processResponse.json();
+                    throw new Error(errorResult.error || '처리 시작에 실패했습니다.');
+                }
+                const { job_id: jobId } = await processResponse.json();
+
+                const eventSource = new EventSource(`/status/${jobId}`);
+                eventSource.onmessage = function(event) {
+                    const data = JSON.parse(event.data);
+                    const item = document.createElement('div');
+                    item.className = 'list-group-item';
+                    item.textContent = data.message;
+                    if (data.message.includes('❌')) {
+                        item.classList.add('list-group-item-danger');
+                        eventSource.close();
+                    }
+                    statusList.appendChild(item);
+                };
+
+                eventSource.onerror = function() {
+                    addStatusError('상태 업데이트 중 오류가 발생했습니다. 연결이 끊겼습니다.');
+                    eventSource.close();
+                };
+                
+                eventSource.addEventListener('close', () => fetchResult(jobId));
+
+            } catch (error) {
+                addStatusError(error.message);
+                resetSubmitButton();
+            }
+        });
+        
+        async function fetchResult(jobId) {
+            try {
+                addStatusMessage('✅ 작업 완료! 결과 가져오는 중...', 'list-group-item-success');
+                const resultResponse = await fetch(`/result/${jobId}`);
+                if (!resultResponse.ok) {
+                    const errorResult = await resultResponse.json();
+                    throw new Error(errorResult.error || '결과를 가져오는데 실패했습니다.');
+                }
+                const finalResult = await resultResponse.json();
+                displayResult(finalResult);
+            } catch (error) {
+                addStatusError(error.message);
+            } finally {
+                resetSubmitButton();
+            }
+        }
+
+        function displayResult(result) {
+            statusContainer.classList.add('d-none');
+            resultContainer.classList.remove('d-none');
+
+            let html = '';
+            if (result.file_info) {
+                html += `<div class="mb-4"><h5>파일 정보</h5><p class="text-muted">${result.file_info.replace(/\n/g, '<br>')}</p></div>`;
+            }
+            if (result.summary_html) {
+                html += `<div class="mb-4"><h5>요약</h5><div class="p-3 bg-light rounded">${result.summary_html}</div></div>`;
+            }
+            if (result.transcript) {
+                 html += `<div><h5>전체 텍스트</h5><pre class="p-3 bg-light rounded"><code>${result.transcript}</code></pre></div>`;
+            }
+            resultCard.innerHTML = html;
+        }
+        
+        function addStatusMessage(message, contextClass = '') {
+            const item = document.createElement('div');
+            item.className = `list-group-item ${contextClass}`;
+            item.textContent = message;
+            statusList.appendChild(item);
+        }
+
+        function addStatusError(message) {
+            const item = document.createElement('div');
+            item.className = 'list-group-item list-group-item-danger';
+            item.textContent = `❌ 오류: ${message}`;
+            statusList.appendChild(item);
+        }
+
+        function resetSubmitButton() {
+            submitButton.disabled = false;
+            submitButtonText.textContent = '처리 시작';
+            submitSpinner.classList.add('d-none');
+        }
+
+    </script>
+</body>
+</html>

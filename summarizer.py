@@ -1,6 +1,7 @@
 import openai
 import requests
 import google.generativeai as genai
+import torch
 from transformers import pipeline
 import config
 
@@ -26,11 +27,15 @@ class TextSummarizer:
 
         elif self.method == 'local_model' and not self.local_summarizer:
             print("로컬 요약 모델을 로딩 중...")
+            # Forcing CPU for stability to match the main STT service
+            device = -1 # -1 for CPU
+            
             self.local_summarizer = pipeline(
                 "summarization",
                 model="eenzeenee/t5-small-korean-summarization",
-                device=-1
+                device=device
             )
+            print(f"로컬 요약 모델이 CPU에 로드되었습니다.")
 
     def summarize_with_openai(self, text, summary_type="general", context=None):
         """OpenAI API를 사용한 텍스트 요약"""

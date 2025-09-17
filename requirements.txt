@@ -12,3 +12,5 @@ pyannote.audio
 pytorch-lightning
 torchmetrics
 huggingface_hub
+Flask
+markdown-it-py
