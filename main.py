@@ -18,7 +18,7 @@ import config
               default='general',
               help='요약 유형 (기본값: general)')
 @click.option('--stt-method', '-s',
-              type=click.Choice(['whisper_api', 'whisper_local']),
+              type=click.Choice(['whisper_api', 'whisper_local', 'whisper_local_diarize']),
               help='STT 방법 (기본값: 설정파일 값)')
 @click.option('--summarize-method', '-m',
               type=click.Choice(['openai_api', 'local_model', 'ollama', 'gemini_api']),

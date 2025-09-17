@@ -1,7 +1,11 @@
 import os
 import openai
 import whisper
-from pathlib import Path
+import torch
+from pyannote.audio import Pipeline
+from huggingface_hub import HfApi, HfFolder
+from datetime import timedelta
+import numpy as np
 import config
 
 class STTService:
@@ -13,6 +17,7 @@ class STTService:
         
         self.openai_client = None
         self.whisper_model = None
+        self.diarization_pipeline = None
 
         print(f"STT 서비스 초기화 (방법: {self.method})")
 
@@ -20,9 +25,26 @@ class STTService:
             if not config.OPENAI_API_KEY:
                 raise ValueError("OpenAI API 키가 설정되지 않았습니다.")
             self.openai_client = openai.OpenAI(api_key=config.OPENAI_API_KEY)
-        elif self.method == 'whisper_local':
-            print("로컬 Whisper 모델(large-v3)을 로딩 중... (CPU)")
-            self.whisper_model = whisper.load_model("large-v3")
+        
+        elif self.method in ['whisper_local', 'whisper_local_diarize']:
+            print("로컬 Whisper 모델(large-v3)을 로딩 중...")
+            device = "cuda" if torch.cuda.is_available() else "cpu"
+            self.whisper_model = whisper.load_model("large-v3", device=device)
+            print(f"Whisper 모델이 {device}에 로드되었습니다.")
+
+            if self.method == 'whisper_local_diarize':
+                if not config.HUGGING_FACE_TOKEN:
+                    raise ValueError("Hugging Face 인증 토큰이 설정되지 않았습니다. .env 파일에 HUGGING_FACE_TOKEN을 추가해주세요.")
+                
+                # Hugging Face 토큰 저장 및 API 클라이언트 초기화
+                HfFolder.save_token(config.HUGGING_FACE_TOKEN)
+                
+                print("Pyannote-audio 화자 분리 파이프라인을 로딩 중...")
+                pipeline_name = "pyannote/speaker-diarization-3.1"
+                self.diarization_pipeline = Pipeline.from_pretrained(pipeline_name, use_auth_token=config.HUGGING_FACE_TOKEN)
+                if torch.cuda.is_available():
+                    self.diarization_pipeline.to(torch.device("cuda"))
+                print("화자 분리 파이프라인 로딩 완료.")
 
     def transcribe_with_api(self, audio_file):
         """OpenAI Whisper API를 사용한 음성 인식"""
@@ -42,11 +64,78 @@ class STTService:
         try:
             if self.whisper_model is None:
                 raise RuntimeError("로컬 Whisper 모델이 초기화되지 않았습니다.")
-            print("CPU로 음성 인식 중...")
-            result = self.whisper_model.transcribe(audio_file, language="ko")
+            print("음성 인식 중...")
+            result = self.whisper_model.transcribe(audio_file, language="ko", fp16=torch.cuda.is_available())
             return result["text"]
         except Exception as e:
             raise RuntimeError(f"로컬 Whisper 음성 인식 실패: {str(e)}")
+
+    def transcribe_with_diarization(self, audio_file):
+        """로컬 모델을 사용한 화자 분리 및 음성 인식"""
+        if self.whisper_model is None or self.diarization_pipeline is None:
+            raise RuntimeError("화자 분리 모델이 초기화되지 않았습니다.")
+
+        print("1/3: 화자 분리 실행 중...")
+        diarization = self.diarization_pipeline(audio_file)
+
+        print("2/3: 음성 인식 실행 중 (단어 타임스탬프 포함)...")
+        whisper_results = self.whisper_model.transcribe(audio_file, language="ko", word_timestamps=True, fp16=torch.cuda.is_available())
+        
+        print("3/3: 결과 결합 중...")
+        return self._combine_results(diarization, whisper_results)
+
+    def _combine_results(self, diarization, whisper_results):
+        """화자 분리 및 음성 인식 결과 결합"""
+        word_segments = whisper_results['segments']
+        
+        # 각 단어에 화자 할당
+        word_speaker_mapping = []
+        for segment in word_segments:
+            for word in segment['words']:
+                word_start, word_end = word['start'], word['end']
+                # 단어의 중간 지점을 기준으로 화자 찾기
+                word_mid_time = word_start + (word_end - word_start) / 2
+                
+                speaker = "UNKNOWN"
+                for turn, _, speaker_label in diarization.itertracks(yield_label=True):
+                    if turn.start <= word_mid_time <= turn.end:
+                        speaker = speaker_label
+                        break
+                word_speaker_mapping.append({'word': word['word'], 'start': word_start, 'end': word_end, 'speaker': speaker})
+
+        # 화자별로 텍스트 재구성
+        final_transcript = ""
+        current_speaker = None
+        segment_start_time = None
+        segment_text = ""
+
+        for word_info in word_speaker_mapping:
+            speaker = word_info['speaker']
+            word = word_info['word']
+            start_time = word_info['start']
+
+            if current_speaker is None:
+                current_speaker = speaker
+                segment_start_time = start_time
+            
+            if speaker != current_speaker:
+                # 이전 세그먼트 완료
+                start_str = str(timedelta(seconds=segment_start_time)).split('.')[0]
+                final_transcript += f"[{start_str}] **{current_speaker}**: {segment_text.strip()}\n\n"
+                
+                # 새 세그먼트 시작
+                current_speaker = speaker
+                segment_start_time = start_time
+                segment_text = ""
+
+            segment_text += word
+        
+        # 마지막 세그먼트 추가
+        if segment_text:
+            start_str = str(timedelta(seconds=segment_start_time)).split('.')[0]
+            final_transcript += f"[{start_str}] **{current_speaker}**: {segment_text.strip()}\n"
+            
+        return final_transcript.strip()
 
     def transcribe(self, audio_file):
         """설정된 방법에 따라 음성을 텍스트로 변환"""
@@ -59,6 +148,8 @@ class STTService:
             return self.transcribe_with_api(audio_file)
         elif self.method == 'whisper_local':
             return self.transcribe_with_local(audio_file)
+        elif self.method == 'whisper_local_diarize':
+            return self.transcribe_with_diarization(audio_file)
         else:
             raise ValueError(f"지원하지 않는 STT 방법: {self.method}")
 
@@ -76,4 +167,6 @@ class STTService:
         methods = ['whisper_local']
         if config.OPENAI_API_KEY:
             methods.append('whisper_api')
+        if config.HUGGING_FACE_TOKEN:
+            methods.append('whisper_local_diarize')
         return methods

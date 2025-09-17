@@ -9,6 +9,6 @@ torch
 torchaudio
 google-generativeai
 pyannote.audio
-pнаяtorch-lightning
+pytorch-lightning
 torchmetrics
 huggingface_hub

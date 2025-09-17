@@ -5,6 +5,7 @@ load_dotenv()
 
 OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
 GOOGLE_API_KEY = os.getenv('GOOGLE_API_KEY')
+HUGGING_FACE_TOKEN = os.getenv('HUGGING_FACE_TOKEN')
 STT_METHOD = os.getenv('STT_METHOD', 'whisper_local')
 SUMMARIZE_METHOD = os.getenv('SUMMARIZE_METHOD', 'local_model')
 
