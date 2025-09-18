@@ -67,16 +67,39 @@ class TextSummarizer:
 
     def summarize_with_gemini(self, text, summary_type="general", context=None):
         """Gemini API를 사용한 텍스트 요약"""
+        response = None # Initialize response
         try:
             system_prompts = {
-                "general": "다음 텍스트를 주요 내용을 빠뜨리지 않고, 최대한 상세하고 길게 요약해주세요. 원본의 핵심적인 정보와 맥락이 모두 포함되어야 합니다.",
-                "meeting": "다음 회의 내용을 최대한 상세하고 길게 요약해주세요. 주요 논의사항, 결정사항, 액션 아이템을 빠짐없이 포함하여 정리해주세요.",
-                "lecture": "다음 강의 내용을 최대한 상세하고 길게 요약해주세요. 핵심 개념, 중요한 설명, 예시를 모두 포함하여 정리해주세요.",
-                "interview": "다음 인터뷰 내용을 최대한 상세하고 길게 요약해주세요. 주요 질문과 답변, 그리고 대화의 핵심 내용을 모두 포함하여 정리해주세요."
+                "general": """[요약 지시]
+당신은 주어진 텍스트를 전문적으로 요약하는 AI 어시스턴트입니다.
+텍스트의 핵심 내용을 상세하고, 길고, 구조적으로 요약해주세요.
+전체 내용을 빠짐없이 검토하고, 원본의 맥락을 완벽하게 유지하면서 최대한 길고 상세하게 작성해주세요.""",
+                "meeting": """[요약 지시]
+당신은 회의록을 전문적으로 요약하는 AI 어시스턴트입니다.
+아래에 제공되는 텍스트는 화자 분리(diarization)가 적용된 회의록일 수 있습니다.
+각 화자의 발언 내용을 바탕으로, 회의의 핵심 내용을 상세하고, 길고, 구조적으로 요약해주세요.
+
+다음 항목들을 반드시 포함해주세요:
+- **주요 논의 안건:** 어떤 주제들이 논의되었나요?
+- **핵심 발언:** 각 주제에 대한 주요 의견들은 무엇이었나요?
+- **결정 사항:** 어떤 결론이 내려졌나요?
+- **향후 계획 (Action Items):** 앞으로 누가 무엇을 해야 하나요?
+
+전체 내용을 빠짐없이 검토하고, 원본의 맥락을 완벽하게 유지하면서 최대한 길고 상세하게 작성해주세요.""",
+                "lecture": """[요약 지시]
+당신은 강의 내용을 전문적으로 요약하는 AI 어시스턴트입니다.
+아래 텍스트는 강의 내용입니다.
+강의의 핵심 개념, 중요한 설명, 예시, 그리고 결론을 중심으로 상세하고, 길고, 구조적으로 요약해주세요.
+수강생이 강의를 듣지 않아도 내용을 완벽히 이해할 수 있도록 최대한 길고 상세하게 작성해주세요.""",
+                "interview": """[요약 지시]
+당신은 인터뷰 내용을 전문적으로 요약하는 AI 어시스턴트입니다.
+아래 텍스트는 인터뷰 내용입니다.
+주요 질문과 답변, 대화의 핵심 주제, 그리고 인터뷰에서 드러난 중요한 정보나 견해를 중심으로 상세하고, 길고, 구조적으로 요약해주세요.
+인터뷰의 전체적인 흐름과 맥락이 잘 드러나도록 최대한 길고 상세하게 작성해주세요."""
             }
             instruction = system_prompts.get(summary_type, system_prompts["meeting"])
             
-            prompt_parts = [f"[요약 지시]\n{instruction}"]
+            prompt_parts = [f"{instruction}"]
             if context:
                 prompt_parts.append(f"\n[사전 정보]\n{context}")
             
@@ -97,21 +120,23 @@ class TextSummarizer:
             )
             return response.text
         except Exception as e:
-            if hasattr(response, 'prompt_feedback') and response.prompt_feedback.block_reason:
+            if response and hasattr(response, 'prompt_feedback') and response.prompt_feedback.block_reason:
                  raise RuntimeError(f"Gemini 요약 실패: 프롬프트가 안전 설정에 의해 차단되었습니다. Reason: {response.prompt_feedback.block_reason}")
-            if not response.parts:
+            if response and not response.parts:
                  raise RuntimeError(f"Gemini 요약 실패: 모델이 생성한 결과가 비어있습니다. Finish Reason: {response.candidates[0].finish_reason}")
             raise RuntimeError(f"Gemini 요약 실패: {str(e)}")
 
     def summarize_with_local(self, text):
         """로컬 모델을 사용한 텍스트 요약"""
         try:
-            max_length = 1024
-            chunks = [text[i:i+max_length] for i in range(0, len(text), max_length)]
+            # T5 모델의 최대 입력 길이를 고려하여 보수적으로 1000자로 설정
+            max_chunk_length = 1000
+            chunks = [text[i:i+max_chunk_length] for i in range(0, len(text), max_chunk_length)]
             summaries = []
             for chunk in chunks:
                 if len(chunk.strip()) > 50:
-                    summary = self.local_summarizer(chunk, max_length=200, min_length=30, do_sample=False)
+                    # 요약 최대 길이를 400으로 늘림
+                    summary = self.local_summarizer(chunk, max_length=1500, min_length=50, do_sample=False)
                     summaries.append(summary[0]['summary_text'])
             return " ".join(summaries)
         except Exception as e:
@@ -121,7 +146,7 @@ class TextSummarizer:
         """Ollama 로컬 LLM을 사용한 텍스트 요약"""
         try:
             url = "http://localhost:11434/api/generate"
-            data = {"model": model_name, "prompt": f"다음 텍스트를 간결하고 명확하게 요약해주세요:\n\n{text}", "stream": False}
+            data = {"model": model_name, "prompt": f"다음 내용을 최대한 상세하고 명확하게 요약해주세요:\n\n{text}", "stream": False}
             response = requests.post(url, json=data)
             response.raise_for_status()
             return response.json()['response']
@@ -154,7 +179,19 @@ class TextSummarizer:
     def create_bullet_points(self, text, context=None):
         """텍스트를 불릿 포인트 형식으로 요약"""
         self._initialize_client()
-        instruction = "다음 텍스트의 주요 내용을 한국어 불릿 포인트(•) 형식으로 정리해주세요. 각 포인트는 간결하고 명확하게 작성해주세요."
+        instruction = """[요약 지시]
+당신은 주어진 텍스트의 핵심 내용을 불릿 포인트(•)로 요약하는 AI 어시스턴트입니다.
+아래 텍스트는 화자 분리(diarization)가 적용된 회의록일 수 있습니다.
+각 화자의 발언 내용을 바탕으로, 회의의 핵심 내용을 상세하고, 길고, 구조적으로 요약해주세요.
+
+다음 항목들을 반드시 포함하여 불릿 포인트(•)로 정리해주세요:
+- **주요 논의 안건:**
+- **핵심 발언:**
+- **결정 사항:**
+- **향후 계획 (Action Items):**
+
+전체 내용을 빠짐없이 검토하고, 원본의 맥락을 완벽하게 유지하면서 최대한 길고 상세하게 작성해주세요."""
+        response = None # Initialize response
         
         if self.method == 'openai_api':
             system_content = f"{instruction}"
@@ -170,7 +207,7 @@ class TextSummarizer:
                 raise RuntimeError(f"OpenAI 불릿 포인트 생성 실패: {str(e)}")
         
         elif self.method == 'gemini_api':
-            prompt_parts = [f"[요약 지시]\n{instruction}"]
+            prompt_parts = [f"{instruction}"]
             if context:
                 prompt_parts.append(f"\n[사전 정보]\n{context}")
             prompt_parts.append(f"\n\n--- 텍스트 시작 ---\n{text}\n--- 텍스트 끝 ---")
@@ -185,9 +222,9 @@ class TextSummarizer:
                 response = self.gemini_model.generate_content(prompt, safety_settings=safety_settings)
                 return response.text
             except Exception as e:
-                if hasattr(response, 'prompt_feedback') and response.prompt_feedback.block_reason:
+                if response and hasattr(response, 'prompt_feedback') and response.prompt_feedback.block_reason:
                     raise RuntimeError(f"Gemini 불릿 포인트 생성 실패: 프롬프트가 안전 설정에 의해 차단되었습니다. Reason: {response.prompt_feedback.block_reason}")
-                if not response.parts:
+                if response and not response.parts:
                     raise RuntimeError(f"Gemini 불릿 포인트 생성 실패: 모델이 생성한 결과가 비어있습니다. Finish Reason: {response.candidates[0].finish_reason}")
                 raise RuntimeError(f"Gemini 불릿 포인트 생성 실패: {str(e)}")
         else:

@@ -89,7 +89,8 @@ def process_file(audio_file, output_dir, stt_method, summarize_method, summary_t
             "transcript_file": str(transcript_file),
             "summary_file": str(summary_file) if summary else None,
             "transcript": transcript,
-            "summary": summary
+            "summary": summary,
+            "audio_info": audio_info
         }
         
     except Exception as e:
