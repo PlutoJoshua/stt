@@ -14,3 +14,4 @@ torchmetrics
 huggingface_hub
 Flask
 markdown-it-py
+mlx-whisper

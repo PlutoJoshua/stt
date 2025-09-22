@@ -213,10 +213,20 @@
             resultContainer.classList.remove('d-none');
 
             let html = '';
+            let buttonsHtml = '<div class="d-flex justify-content-end gap-2 mb-3">';
 
-            // Add Download Button
-            if (result.download_url) {
-                html += `<a href="${result.download_url}" class="btn btn-success float-end">MD 파일 다운로드</a>`;
+            // Add Download Buttons
+            if (result.summary_download_url) {
+                buttonsHtml += `<a href="${result.summary_download_url}" class="btn btn-success">요약본(MD) 다운로드</a>`;
+            }
+            if (result.transcript_download_url) {
+                buttonsHtml += `<a href="${result.transcript_download_url}" class="btn btn-secondary">전체 텍스트(TXT) 다운로드</a>`;
+            }
+            buttonsHtml += '</div>';
+
+            // Only add buttons container if there are buttons
+            if (result.summary_download_url || result.transcript_download_url) {
+                html += buttonsHtml;
             }
 
             if (result.file_info) {
@@ -228,8 +238,8 @@
             if (result.summary_html) {
                 html += `<div class="mb-4">${result.summary_html}</div>`;
             }
-            if (result.transcript) {
-                 html += `<div><h5>전체 텍스트</h5><pre class="p-3 bg-light rounded"><code>${result.transcript}</code></pre></div>`;
+            if (result.transcript_html) {
+                 html += `<div>${result.transcript_html}</div>`;
             }
             resultCard.innerHTML = html;
         }

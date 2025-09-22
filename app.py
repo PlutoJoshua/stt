@@ -74,8 +74,13 @@ def run_background_processing(job_id, audio_path, options):
         end_time = time.time()
         start_time = jobs[job_id].get('start_time', end_time)
         duration = end_time - start_time
+        minutes, seconds = divmod(duration, 60)
+        
         jobs[job_id]['end_time'] = datetime.fromtimestamp(end_time).strftime("%Y-%m-%d %H:%M:%S")
-        jobs[job_id]['duration'] = f"{duration:.2f} 초"
+        if minutes >= 1:
+            jobs[job_id]['duration'] = f"{int(minutes)}분 {int(seconds)}초"
+        else:
+            jobs[job_id]['duration'] = f"{int(seconds)}초"
 
         # Signal completion to the SSE stream
         if jobs[job_id]['status'] == 'complete':
@@ -149,7 +154,7 @@ def status(job_id):
 
 @app.route('/result/<job_id>')
 def result(job_id):
-    """Provides the final result of the processing or a downloadable markdown file."""
+    """Provides the final result of the processing or a downloadable file."""
     if job_id not in jobs:
         return jsonify({"error": "Invalid or expired job ID"}), 404
 
@@ -157,76 +162,59 @@ def result(job_id):
     if job_info['status'] != 'complete':
         return jsonify({"error": "Job not complete"}), 404
 
-    result_data = job_info['result']
-    download_format = request.args.get('format')
+    result_data = job_info.get('result', {})
+    download_type = request.args.get('type')
+    audio_filename_base = os.path.basename(result_data.get('transcript_file', '')).split('_')[0]
 
-    # --- Helper function to generate markdown content ---
-    def generate_markdown():
-        audio_filename = os.path.basename(result_data.get('transcript_file', '')).split('_')[0]
-        
-        # 1. File Info
-        md_content = "# 📝 음성 기록 요약\n\n"
-        md_content += "## 📁 파일 정보\n"
-        md_content += f"- **파일:** `{audio_filename}`\n"
-        if result_data.get('audio_info'):
-            audio_info = result_data['audio_info']
-            md_content += f"- **길이:** `{audio_info.get('duration_formatted')}`\n"
-            md_content += f"- **크기:** `{audio_info.get('file_size_mb', 0):.1f}MB`\n\n"
-
-        # 2. Timing Info
-        md_content += "## ⏱️ 처리 시간 정보\n"
-        md_content += f"- **시작 시간:** `{job_info.get('start_time_str', 'N/A')}`\n"
-        md_content += f"- **종료 시간:** `{job_info.get('end_time', 'N/A')}`\n"
-        md_content += f"- **총 소요 시간:** `{job_info.get('duration', 'N/A')}`\n\n"
-
-        # 3. Summary
-        if result_data.get('summary'):
-            md_content += "## 📜 요약 내용\n"
-            md_content += f"{result_data['summary']}\n\n"
-
-        # 4. Transcript
-        if result_data.get('transcript'):
-            md_content += "## ✍️ 전체 텍스트\n"
-            md_content += f"```\n{result_data['transcript']}\n```\n"
-        
-        return md_content, audio_filename
-
-    # --- Handle Download Request ---
-    if download_format == 'md':
-        markdown_content, audio_filename = generate_markdown()
-        download_filename = f"{audio_filename}_summary_{job_id[:8]}.md"
-        
-        response = make_response(markdown_content)
+    # --- Handle Download Requests ---
+    if download_type == 'summary':
+        if not result_data.get('summary'):
+            return "요약이 생성되지 않았습니다.", 404
+        md_content = f"# 📝 '{audio_filename_base}' 음성 기록 요약\n\n## 📜 요약 내용\n{result_data['summary']}"
+        download_filename = f"{audio_filename_base}_summary_{job_id[:8]}.md"
+        response = make_response(md_content)
         response.headers['Content-Disposition'] = f"attachment; filename*=UTF-8''{download_filename}"
         response.headers['Content-Type'] = 'text/markdown; charset=utf-8'
         return response
 
-    # --- Handle JSON API Request ---
+    if download_type == 'transcript':
+        if not result_data.get('transcript'):
+            return "변환된 텍스트가 없습니다.", 404
+        transcript_content = result_data['transcript']
+        download_filename = f"{audio_filename_base}_transcript_{job_id[:8]}.txt"
+        response = make_response(transcript_content)
+        response.headers['Content-Disposition'] = f"attachment; filename*=UTF-8''{download_filename}"
+        response.headers['Content-Type'] = 'text/plain; charset=utf-8'
+        return response
+
+    # --- Handle JSON API Request for displaying on the page ---
     response_json = {}
-    if result_data.get('summary'):
-        summary_content = result_data['summary']
-        md_summary_text = f"## 📜 요약 내용\n{summary_content}"
-        response_json['summary_html'] = md.render(md_summary_text)
-        
-        audio_filename = os.path.basename(result_data['transcript_file']).split('_')[0]
-        file_info_text = f"- **파일:** `{audio_filename}`"
-        if result_data.get('audio_info'):
-            audio_info = result_data['audio_info']
-            file_info_text += f"\n- **길이:** `{audio_info.get('duration_formatted')}`"
-            file_info_text += f"\n- **크기:** `{audio_info.get('file_size_mb', 0):.1f}MB`"
-        response_json['file_info'] = md.render(file_info_text)
 
-    elif result_data.get('transcript'):
-        response_json['transcript'] = result_data['transcript']
+    # File Info
+    file_info_text = f"- **파일:** `{audio_filename_base}`"
+    if result_data.get('audio_info'):
+        audio_info = result_data['audio_info']
+        file_info_text += f"\n- **길이:** `{audio_info.get('duration_formatted')}`"
+        file_info_text += f"\n- **크기:** `{audio_info.get('file_size_mb', 0):.1f}MB`"
+    response_json['file_info'] = md.render(file_info_text)
 
+    # Timing Info
     response_json['timing_info'] = md.render(f"### ⏱️ 처리 시간 정보\n- **시작 시간:** `{job_info.get('start_time_str', 'N/A')}`\n- **종료 시간:** `{job_info.get('end_time', 'N/A')}`\n- **총 소요 시간:** `{job_info.get('duration', 'N/A')}`\n")
-    response_json['download_url'] = f"/result/{job_id}?format=md"
 
-    # In a production app, you'd use a more robust job cleanup strategy (e.g., TTL, background worker)
-    # For this simple app, we keep the job result in memory for a while.
-    # del jobs[job_id] 
+    # Summary
+    if result_data.get('summary'):
+        response_json['summary_html'] = md.render(f"## 📜 요약 내용\n{result_data['summary']}")
+        response_json['summary_download_url'] = f"/result/{job_id}?type=summary"
+
+    # Transcript
+    if result_data.get('transcript'):
+        response_json['transcript_html'] = md.render(f"## ✍️ 전체 텍스트\n```\n{result_data['transcript']}\n```")
+        response_json['transcript_download_url'] = f"/result/{job_id}?type=transcript"
 
     return jsonify(response_json)
+
+
+
 
 
 

@@ -7,6 +7,16 @@ from huggingface_hub import HfApi, HfFolder
 from datetime import timedelta
 import numpy as np
 import config
+import platform
+
+# Try to import mlx_whisper
+mlx_whisper = None
+if platform.system() == "Darwin":
+    try:
+        import mlx_whisper
+    except ImportError:
+        print("MLX Whisper not found. To use it, run: pip install mlx-whisper")
+        pass
 
 class STTService:
     def __init__(self, method=None):
@@ -28,7 +38,7 @@ class STTService:
         
         elif self.method in ['whisper_local', 'whisper_local_diarize']:
             print("로컬 Whisper 모델(large-v3)을 로딩 중...")
-            # Temporarily forcing CPU to avoid MPS sparse tensor bug
+            # Forcing CPU to avoid MPS sparse tensor bug
             device = "cpu"
 
             self.whisper_model = whisper.load_model("large-v3", device=device)
@@ -46,6 +56,11 @@ class STTService:
                 # Forcing to CPU as well for stability
                 self.diarization_pipeline.to(torch.device(device))
                 print(f"화자 분리 파이프라인이 {device}에 로드되었습니다.")
+
+        elif self.method == 'whisper_mlx':
+            if not mlx_whisper:
+                raise RuntimeError("MLX Whisper를 사용할 수 없습니다. 'mlx-whisper'가 설치되었는지, 그리고 Apple Silicon 환경인지 확인해주세요.")
+            print("MLX Whisper 백엔드를 사용합니다. 모델은 실행 시 로드됩니다.")
 
     def transcribe_with_api(self, audio_file):
         """OpenAI Whisper API를 사용한 음성 인식"""
@@ -70,6 +85,22 @@ class STTService:
             return result["text"]
         except Exception as e:
             raise RuntimeError(f"로컬 Whisper 음성 인식 실패: {str(e)}")
+
+    def transcribe_with_mlx(self, audio_file):
+        """MLX Whisper를 사용한 음성 인식"""
+        try:
+            if not mlx_whisper:
+                raise RuntimeError("MLX Whisper가 초기화되지 않았습니다.")
+            print("MLX Whisper로 음성 인식 중...")
+            # Using large-v3 model for consistency with the local pytorch version
+            result = mlx_whisper.transcribe(
+                audio_file, 
+                path_or_hf_repo="mlx-community/whisper-large-v3-mlx", 
+                language="ko"
+            )
+            return result["text"]
+        except Exception as e:
+            raise RuntimeError(f"MLX Whisper 음성 인식 실패: {str(e)}")
 
     def transcribe_with_diarization(self, audio_file):
         """로컬 모델을 사용한 화자 분리 및 음성 인식"""
@@ -147,6 +178,8 @@ class STTService:
 
         if self.method == 'whisper_api':
             return self.transcribe_with_api(audio_file)
+        elif self.method == 'whisper_mlx':
+            return self.transcribe_with_mlx(audio_file)
         elif self.method == 'whisper_local':
             return self.transcribe_with_local(audio_file)
         elif self.method == 'whisper_local_diarize':
@@ -165,7 +198,13 @@ class STTService:
 
     def get_available_methods(self):
         """사용 가능한 STT 방법 반환"""
-        methods = ['whisper_local']
+        methods = []
+        # MLX is preferred on Mac
+        if mlx_whisper:
+            methods.append('whisper_mlx')
+        
+        methods.append('whisper_local')
+
         if config.OPENAI_API_KEY:
             methods.append('whisper_api')
         if config.HUGGING_FACE_TOKEN:

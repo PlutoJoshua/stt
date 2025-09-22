@@ -6,6 +6,17 @@ from processor import process_file
 from stt_service import STTService
 from summarizer import TextSummarizer
 
+# Get available methods for Click options
+try:
+    available_stt_methods = STTService().get_available_methods()
+except Exception:
+    available_stt_methods = ['whisper_api', 'whisper_local', 'whisper_local_diarize'] # Fallback
+
+try:
+    available_summarize_methods = TextSummarizer().get_available_methods()
+except Exception:
+    available_summarize_methods = ['openai_api', 'local_model', 'ollama', 'gemini_api'] # Fallback
+
 @click.command()
 @click.argument('audio_file', type=click.Path(exists=True))
 @click.option('--output-dir', '-o', default='./output', help='출력 디렉토리 (기본값: ./output)')
@@ -14,10 +25,10 @@ from summarizer import TextSummarizer
               default='general',
               help='요약 유형 (기본값: general)')
 @click.option('--stt-method', '-s',
-              type=click.Choice(['whisper_api', 'whisper_local', 'whisper_local_diarize']),
+              type=click.Choice(available_stt_methods),
               help='STT 방법 (기본값: 설정파일 값)')
 @click.option('--summarize-method', '-m',
-              type=click.Choice(['openai_api', 'local_model', 'ollama', 'gemini_api']),
+              type=click.Choice(available_summarize_methods),
               help='요약 방법 (기본값: 설정파일 값)')
 @click.option('--context-file', type=click.Path(exists=True), help='요약에 참고할 컨텍스트 파일 경로')
 @click.option('--no-summary', is_flag=True, help='요약하지 않고 텍스트 변환만 수행')
