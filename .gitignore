@@ -26,5 +26,6 @@ TestResults.xml
 .env.example
 /stt
 /output
+/uploads
 #Voice file
 **Voice**

@@ -32,12 +32,12 @@ md = MarkdownIt()
 def index():
     """Renders the main page with dynamic method options."""
     try:
-        stt_methods = STTService().get_available_methods()
+        stt_methods = STTService.get_available_methods()
     except Exception:
         stt_methods = ['whisper_local'] # Fallback
     
     try:
-        summarize_methods = TextSummarizer().get_available_methods()
+        summarize_methods = TextSummarizer.get_available_methods()
     except Exception:
         summarize_methods = ['local_model'] # Fallback
 

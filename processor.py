@@ -3,8 +3,7 @@ from pathlib import Path
 from datetime import datetime
 
 from audio_processor import AudioProcessor
-from stt_service import STTService
-from summarizer import TextSummarizer
+from models import get_stt_service, get_summarizer
 import config
 
 def process_file(audio_file, output_dir, stt_method, summarize_method, summary_type, 
@@ -42,7 +41,7 @@ def process_file(audio_file, output_dir, stt_method, summarize_method, summary_t
         converted_wav_file = audio_processor.convert_to_wav(audio_file, stt_method=final_stt_method)
         
         log(f"✍️ 음성-텍스트 변환 시작 (방법: {final_stt_method})...")
-        stt_service = STTService(method=final_stt_method)
+        stt_service = get_stt_service(final_stt_method)
         transcript = stt_service.transcribe(converted_wav_file)
         
         if os.path.exists(converted_wav_file):
@@ -61,7 +60,7 @@ def process_file(audio_file, output_dir, stt_method, summarize_method, summary_t
 
             final_summarize_method = summarize_method if summarize_method else config.SUMMARIZE_METHOD
             log(f"📋 텍스트 요약 시작 (방법: {final_summarize_method})...")
-            summarizer = TextSummarizer()
+            summarizer = get_summarizer()
             summarizer.method = final_summarize_method
             
             if bullet_points:

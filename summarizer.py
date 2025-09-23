@@ -239,7 +239,8 @@ class TextSummarizer:
         except Exception as e:
             raise RuntimeError(f"요약 저장 실패: {str(e)}")
 
-    def get_available_methods(self):
+    @staticmethod
+    def get_available_methods():
         """사용 가능한 요약 방법 반환"""
         methods = ['local_model']
         if config.OPENAI_API_KEY:
@@ -247,6 +248,7 @@ class TextSummarizer:
         if config.GOOGLE_API_KEY:
             methods.append('gemini_api')
         try:
+            import requests
             response = requests.get("http://localhost:11434/api/tags", timeout=2)
             if response.status_code == 200:
                 methods.append('ollama')

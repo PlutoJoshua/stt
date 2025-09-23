@@ -196,7 +196,8 @@ class STTService:
         except Exception as e:
             raise RuntimeError(f"텍스트 저장 실패: {str(e)}")
 
-    def get_available_methods(self):
+    @staticmethod
+    def get_available_methods():
         """사용 가능한 STT 방법 반환"""
         methods = []
         # MLX is preferred on Mac

@@ -8,12 +8,12 @@ from summarizer import TextSummarizer
 
 # Get available methods for Click options
 try:
-    available_stt_methods = STTService().get_available_methods()
+    available_stt_methods = STTService.get_available_methods()
 except Exception:
     available_stt_methods = ['whisper_api', 'whisper_local', 'whisper_local_diarize'] # Fallback
 
 try:
-    available_summarize_methods = TextSummarizer().get_available_methods()
+    available_summarize_methods = TextSummarizer.get_available_methods()
 except Exception:
     available_summarize_methods = ['openai_api', 'local_model', 'ollama', 'gemini_api'] # Fallback
 
@@ -82,15 +82,13 @@ def info():
     print("\n📋 사용 가능한 방법:")
     
     try:
-        stt_service = STTService()
-        available_stt = stt_service.get_available_methods()
+        available_stt = STTService.get_available_methods()
         print(f"  STT: {', '.join(available_stt)}")
     except Exception as e:
         print(f"  STT: 확인 실패 ({str(e)})")
     
     try:
-        summarizer = TextSummarizer()
-        available_summarize = summarizer.get_available_methods()
+        available_summarize = TextSummarizer.get_available_methods()
         print(f"  요약: {', '.join(available_summarize)}")
     except Exception as e:
         print(f"  요약: 확인 실패 ({str(e)})")
