@@ -23,8 +23,8 @@
                 
                 <form id="upload-form">
                     <div id="drop-zone" class="drop-zone p-5 text-center rounded mb-4" role="button">
-                        <span class="drop-zone__prompt text-muted">오디오 파일을 이곳에 드래그 앤 드롭하거나 클릭하여 선택하세요.</span>
-                        <input type="file" name="audio_file" id="audio_file" class="d-none" accept=".mp3,.mp4,.wav,.m4a,.flac,.ogg">
+                        <span class="drop-zone__prompt text-muted">오디오 파일을 이곳에 드래그 앤 드롭하거나 클릭하여 선택하세요. (여러 개 선택 가능)</span>
+                        <input type="file" name="audio_files" id="audio_files" class="d-none" accept=".mp3,.mp4,.wav,.m4a,.flac,.ogg" multiple>
                     </div>
 
                     <div class="row g-3 mb-4">
@@ -92,7 +92,7 @@
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
     <script>
         const dropZone = document.getElementById('drop-zone');
-        const fileInput = document.getElementById('audio_file');
+        const fileInput = document.getElementById('audio_files');
         const form = document.getElementById('upload-form');
         const submitButton = document.getElementById('submit-button');
         const submitButtonText = document.getElementById('submit-button-text');
@@ -122,9 +122,10 @@
         function updateDropZonePrompt() {
             const prompt = dropZone.querySelector('.drop-zone__prompt');
             if (fileInput.files.length > 0) {
-                prompt.textContent = `선택된 파일: ${fileInput.files[0].name}`;
+                let fileNames = Array.from(fileInput.files).map(f => f.name).join(', ');
+                prompt.textContent = `선택된 파일 (${fileInput.files.length}개): ${fileNames}`;
             } else {
-                prompt.textContent = '오디오 파일을 이곳에 드래그 앤 드롭하거나 클릭하여 선택하세요.';
+                prompt.textContent = '오디오 파일을 이곳에 드래그 앤 드롭하거나 클릭하여 선택하세요. (여러 개 선택 가능)';
             }
         }
 

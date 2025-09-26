@@ -10,7 +10,8 @@ class TextSummarizer:
         self.method = config.SUMMARIZE_METHOD
         self.openai_client = None
         self.local_summarizer = None
-        self.gemini_model = None
+        self.gemini_map_model = None
+        self.gemini_reduce_model = None
         
     def _initialize_client(self):
         """필요한 API 클라이언트를 초기화합니다."""
@@ -19,11 +20,14 @@ class TextSummarizer:
                 raise ValueError("OpenAI API 키가 설정되지 않았습니다.")
             self.openai_client = openai.OpenAI(api_key=config.OPENAI_API_KEY)
         
-        elif self.method == 'gemini_api' and not self.gemini_model:
+        elif self.method == 'gemini_api' and (not self.gemini_map_model or not self.gemini_reduce_model):
             if not config.GOOGLE_API_KEY:
                 raise ValueError("Google API 키가 설정되지 않았습니다.")
             genai.configure(api_key=config.GOOGLE_API_KEY)
-            self.gemini_model = genai.GenerativeModel('gemini-2.5-pro')
+            print(f"Gemini Map Model: {config.GEMINI_MODEL_FOR_SUMMARY}")
+            print(f"Gemini Reduce Model: {config.GEMINI_MODEL_FOR_FINAL_SUMMARY}")
+            self.gemini_map_model = genai.GenerativeModel(config.GEMINI_MODEL_FOR_SUMMARY)
+            self.gemini_reduce_model = genai.GenerativeModel(config.GEMINI_MODEL_FOR_FINAL_SUMMARY)
 
         elif self.method == 'local_model' and not self.local_summarizer:
             print("로컬 요약 모델을 로딩 중...")
@@ -66,18 +70,64 @@ class TextSummarizer:
             raise RuntimeError(f"OpenAI 요약 실패: {str(e)}")
 
     def summarize_with_gemini(self, text, summary_type="general", context=None):
-        """Gemini API를 사용한 텍스트 요약"""
+        """Gemini API를 사용한 텍스트 요약. 긴 텍스트는 분할 처리합니다."""
+        
+        # Gemini 1.5 Flash의 컨텍스트 창을 고려하여 보수적인 문자 수 제한 설정
+        # Flash 모델의 1M 토큰은 약 200~400만 문자에 해당하나, 프롬프트/응답 공간을 고려하여 800,000자로 설정
+        CHAR_LIMIT = 800000
+
+        if len(text) < CHAR_LIMIT:
+            # 텍스트가 짧으면 Reduce 모델(고성능)로 직접 요약
+            print("텍스트가 짧아 직접 요약을 진행합니다.")
+            return self._call_gemini_api(self.gemini_reduce_model, text, summary_type, context)
+        else:
+            # 텍스트가 길면 분할하여 요약 (Map-Reduce)
+            print(f"텍스트가 너무 깁니다({len(text)}자). 분할하여 요약을 진행합니다.")
+            return self._summarize_long_text_gemini(text, summary_type, context, CHAR_LIMIT)
+
+    def _summarize_long_text_gemini(self, text, summary_type, context, chunk_size):
+        """긴 텍스트를 Map-Reduce 방식으로 요약합니다."""
+        
+        # 1. 텍스트 분할 (Map)
+        text_chunks = [text[i:i+chunk_size] for i in range(0, len(text), chunk_size)]
+        print(f"{len(text_chunks)}개의 조각으로 나누어 요약을 시작합니다.")
+
+        # 2. 각 조각 요약
+        intermediate_summaries = []
+        for i, chunk in enumerate(text_chunks):
+            print(f"[{i+1}/{len(text_chunks)}]번째 조각 요약 중...")
+            # Map 단계에서는 Map용 모델 사용
+            summary = self._call_gemini_api(self.gemini_map_model, chunk, summary_type, context, is_chunk=True)
+            intermediate_summaries.append(summary)
+
+        # 3. 요약본들 취합 및 최종 요약 (Reduce)
+        print("개별 요약을 취합하여 최종 요약을 생성합니다.")
+        combined_summaries = "\n\n---\n\n".join(intermediate_summaries)
+        
+        # Reduce 단계에서는 Reduce용 모델 사용
+        final_summary = self._call_gemini_api(self.gemini_reduce_model, combined_summaries, summary_type, context, is_final=True)
+        
+        return final_summary
+
+    def _call_gemini_api(self, model, text, summary_type, context, is_chunk=False, is_final=False):
+        """Gemini API를 직접 호출하는 내부 함수"""
         response = None # Initialize response
         try:
-            system_prompts = {
-                "general": """[요약 지시]
+            # 단계별 프롬프트 선택
+            if is_chunk:
+                instruction = "다음은 긴 문서의 일부입니다. 이 부분을 상세하고 구조적으로 요약해주세요. 나중에 다른 부분들과 합쳐질 것을 감안하여, 주요 내용과 맥락을 최대한 보존해주세요."
+            elif is_final:
+                instruction = "다음은 긴 문서의 각 부분을 요약한 내용들입니다. 이 요약본들을 종합하여, 전체 문서에 대한 하나의 최종적이고 완성도 높은 요약문을 만들어주세요. 전체적인 흐름과 핵심 내용을 명확하게 정리해야 합니다."
+            else: # 일반 요약
+                system_prompts = {
+                    "general": '''[요약 지시]
 당신은 주어진 텍스트를 전문적으로 요약하는 AI 어시스턴트입니다.
-텍스트의 핵심 내용을 상세하고, 길고, 구조적으로 요약해주세요.
-전체 내용을 빠짐없이 검토하고, 원본의 맥락을 완벽하게 유지하면서 최대한 길고 상세하게 작성해주세요.""",
-                "meeting": """[요약 지시]
+텍스트의 핵심 내용을 매우 상세하고, 길고, 구조적으로 요약해주세요.
+주요 내용을 절대 빠뜨리지 말고, 원본의 맥락과 뉘앙스를 완벽하게 유지하면서 최대한 길고 상세하게 작성해주세요. 짧은 요약은 허용되지 않습니다.''',
+                    "meeting": '''[요약 지시]
 당신은 회의록을 전문적으로 요약하는 AI 어시스턴트입니다.
 아래에 제공되는 텍스트는 화자 분리(diarization)가 적용된 회의록일 수 있습니다.
-각 화자의 발언 내용을 바탕으로, 회의의 핵심 내용을 상세하고, 길고, 구조적으로 요약해주세요.
+각 화자의 발언 내용을 바탕으로, 회의의 핵심 내용을 매우 상세하고, 길고, 구조적으로 요약해주세요.
 
 다음 항목들을 반드시 포함해주세요:
 - **주요 논의 안건:** 어떤 주제들이 논의되었나요?
@@ -85,25 +135,25 @@ class TextSummarizer:
 - **결정 사항:** 어떤 결론이 내려졌나요?
 - **향후 계획 (Action Items):** 앞으로 누가 무엇을 해야 하나요?
 
-전체 내용을 빠짐없이 검토하고, 원본의 맥락을 완벽하게 유지하면서 최대한 길고 상세하게 작성해주세요.""",
-                "lecture": """[요약 지시]
+전체 내용을 빠짐없이 검토하고, 원본의 맥락을 완벽하게 유지하면서 최대한 길고 상세하게 작성해주세요. 짧은 요약은 허용되지 않습니다.''',
+                    "lecture": '''[요약 지시]
 당신은 강의 내용을 전문적으로 요약하는 AI 어시스턴트입니다.
 아래 텍스트는 강의 내용입니다.
-강의의 핵심 개념, 중요한 설명, 예시, 그리고 결론을 중심으로 상세하고, 길고, 구조적으로 요약해주세요.
-수강생이 강의를 듣지 않아도 내용을 완벽히 이해할 수 있도록 최대한 길고 상세하게 작성해주세요.""",
-                "interview": """[요약 지시]
+강의의 핵심 개념, 중요한 설명, 예시, 그리고 결론을 중심으로 매우 상세하고, 길고, 구조적으로 요약해주세요.
+수강생이 강의를 듣지 않아도 내용을 완벽히 이해할 수 있도록, 사소한 내용도 빠짐없이 최대한 길고 상세하게 작성해주세요. 짧은 요약은 허용되지 않습니다.''',
+                    "interview": '''[요약 지시]
 당신은 인터뷰 내용을 전문적으로 요약하는 AI 어시스턴트입니다.
 아래 텍스트는 인터뷰 내용입니다.
-주요 질문과 답변, 대화의 핵심 주제, 그리고 인터뷰에서 드러난 중요한 정보나 견해를 중심으로 상세하고, 길고, 구조적으로 요약해주세요.
-인터뷰의 전체적인 흐름과 맥락이 잘 드러나도록 최대한 길고 상세하게 작성해주세요."""
-            }
-            instruction = system_prompts.get(summary_type, system_prompts["meeting"])
-            
+주요 질문과 답변, 대화의 핵심 주제, 그리고 인터뷰에서 드러난 중요한 정보나 견해를 중심으로 매우 상세하고, 길고, 구조적으로 요약해주세요.
+인터뷰의 전체적인 흐름과 맥락이 잘 드러나도록, 사소한 내용도 빠짐없이 최대한 길고 상세하게 작성해주세요. 짧은 요약은 허용되지 않습니다.'''
+                }
+                instruction = system_prompts.get(summary_type, system_prompts["meeting"])
+
             prompt_parts = [f"{instruction}"]
             if context:
                 prompt_parts.append(f"\n[사전 정보]\n{context}")
             
-            prompt_parts.append(f"\n\n--- 요약할 텍스트 시작 ---\n{text}\n--- 요약할 텍스트 끝 ---")
+            prompt_parts.append(f"\n\n--- 텍스트 시작 ---\n{text}\n--- 텍스트 끝 ---")
             
             prompt = "\n".join(prompt_parts)
             
@@ -114,7 +164,7 @@ class TextSummarizer:
                 {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"},
             ]
 
-            response = self.gemini_model.generate_content(
+            response = model.generate_content(
                 prompt, 
                 safety_settings=safety_settings
             )
@@ -219,7 +269,7 @@ class TextSummarizer:
                     {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_NONE"},
                     {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"},
                 ]
-                response = self.gemini_model.generate_content(prompt, safety_settings=safety_settings)
+                response = self.gemini_reduce_model.generate_content(prompt, safety_settings=safety_settings)
                 return response.text
             except Exception as e:
                 if response and hasattr(response, 'prompt_feedback') and response.prompt_feedback.block_reason:

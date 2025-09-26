@@ -45,7 +45,7 @@ def index():
                            stt_methods=stt_methods, 
                            summarize_methods=summarize_methods)
 
-def run_background_processing(job_id, audio_path, options):
+def run_background_processing(job_id, audio_paths, options):
     """The function that runs in a background thread."""
     def status_callback(message):
         # Put status message into the job's queue
@@ -53,7 +53,7 @@ def run_background_processing(job_id, audio_path, options):
 
     try:
         result = process_file(
-            audio_file=audio_path,
+            audio_files=audio_paths,
             output_dir=OUTPUT_FOLDER,
             stt_method=options.get('stt_method'),
             summarize_method=options.get('summarize_method'),
@@ -90,17 +90,19 @@ def run_background_processing(job_id, audio_path, options):
 @app.route('/process', methods=['POST'])
 def process():
     """Handles file upload and starts the background processing."""
-    if 'audio_file' not in request.files:
+    if 'audio_files' not in request.files:
         return jsonify({"error": "No audio file provided"}), 400
     
-    file = request.files['audio_file']
-    if file.filename == '':
+    files = request.files.getlist('audio_files')
+    if not files or files[0].filename == '':
         return jsonify({"error": "No selected file"}), 400
 
-    # Save the uploaded file
-    filename = f"{uuid.uuid4()}_{file.filename}"
-    audio_path = os.path.join(UPLOAD_FOLDER, filename)
-    file.save(audio_path)
+    audio_paths = []
+    for file in files:
+        filename = f"{uuid.uuid4()}_{file.filename}"
+        audio_path = os.path.join(UPLOAD_FOLDER, filename)
+        file.save(audio_path)
+        audio_paths.append(audio_path)
 
     # Collect options from form
     options = {
@@ -122,7 +124,7 @@ def process():
     }
 
     # Start the background thread
-    thread = Thread(target=run_background_processing, args=(job_id, audio_path, options))
+    thread = Thread(target=run_background_processing, args=(job_id, audio_paths, options))
     thread.start()
 
     return jsonify({"status": "processing", "job_id": job_id})
