@@ -7,7 +7,7 @@ from models import get_stt_service, get_summarizer
 import config
 
 def process_file(audio_files, output_dir, stt_method, summarize_method, summary_type, 
-                 context_file, no_summary, bullet_points, status_callback=None):
+                 context_file, no_summary, bullet_points, include_timestamps_in_summary, status_callback=None):
     """
     음성 파일을 처리하는 핵심 로직입니다.
     CLI와 웹 UI에서 모두 호출할 수 있도록 분리되었습니다.
@@ -85,9 +85,9 @@ def process_file(audio_files, output_dir, stt_method, summarize_method, summary_
             summarizer.method = final_summarize_method
             
             if bullet_points:
-                summary = summarizer.create_bullet_points(full_transcript, context=context_text)
+                summary = summarizer.create_bullet_points(full_transcript, context=context_text, include_timestamps=include_timestamps_in_summary)
             else:
-                summary = summarizer.summarize(full_transcript, summary_type, context=context_text)
+                summary = summarizer.summarize(full_transcript, summary_type, context=context_text, include_timestamps=include_timestamps_in_summary)
             
             md_summary = f"""# 📝 음성 기록 요약
 

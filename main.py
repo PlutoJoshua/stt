@@ -21,7 +21,7 @@ except Exception:
 @click.argument('audio_file', type=click.Path(exists=True))
 @click.option('--output-dir', '-o', default='./output', help='출력 디렉토리 (기본값: ./output)')
 @click.option('--summary-type', '-t', 
-              type=click.Choice(['general', 'meeting', 'lecture', 'interview']),
+              type=click.Choice(['general', 'meeting', 'lecture', 'interview', 'daily_conversation']),
               default='general',
               help='요약 유형 (기본값: general)')
 @click.option('--stt-method', '-s',
@@ -30,12 +30,13 @@ except Exception:
 @click.option('--summarize-method', '-m',
               type=click.Choice(available_summarize_methods),
               help='요약 방법 (기본값: 설정파일 값)')
+@click.option('--include-timestamps-in-summary', is_flag=True, help='요약에 타임스탬프 포함')
 @click.option('--context-file', type=click.Path(exists=True), help='요약에 참고할 컨텍스트 파일 경로')
 @click.option('--no-summary', is_flag=True, help='요약하지 않고 텍스트 변환만 수행')
 @click.option('--bullet-points', is_flag=True, help='불릿 포인트 형식으로 요약')
 @click.option('--chunk-duration', default=10, help='(사용되지 않음) 긴 오디오 분할 시간 (분, 기본값: 10)')
 def process_audio_command(audio_file, output_dir, summary_type, stt_method, summarize_method, 
-                         context_file, no_summary, bullet_points, chunk_duration):
+                         context_file, no_summary, bullet_points, chunk_duration, include_timestamps_in_summary):
     """음성 파일을 텍스트로 변환하고 요약하는 프로그램"""
     try:
         results = process_file(
@@ -46,7 +47,8 @@ def process_audio_command(audio_file, output_dir, summary_type, stt_method, summ
             summary_type=summary_type,
             context_file=context_file,
             no_summary=no_summary,
-            bullet_points=bullet_points
+            bullet_points=bullet_points,
+            include_timestamps_in_summary=include_timestamps_in_summary
         )
         
         if results and results.get("summary"):

@@ -69,11 +69,22 @@ class STTService:
                 transcript = self.openai_client.audio.transcriptions.create(
                     model="whisper-1",
                     file=file,
-                    language="ko"
+                    language="ko",
+                    response_format="verbose_json"
                 )
-            return transcript.text
+            return self._format_transcript_with_timestamps(transcript)
         except Exception as e:
             raise RuntimeError(f"Whisper API 음성 인식 실패: {str(e)}")
+
+    def _format_transcript_with_timestamps(self, whisper_results):
+        """Whisper 결과에서 타임스탬프가 포함된 텍스트를 생성합니다."""
+        final_transcript = ""
+        for segment in whisper_results['segments']:
+            start_time = segment['start']
+            start_str = str(timedelta(seconds=round(start_time))).split('.')[0]
+            text = segment['text']
+            final_transcript += f"[{start_str}] {text.strip()}\n"
+        return final_transcript.strip()
 
     def transcribe_with_local(self, audio_file):
         """로컬 Whisper 모델을 사용한 음성 인식"""
@@ -81,8 +92,8 @@ class STTService:
             if self.whisper_model is None:
                 raise RuntimeError("로컬 Whisper 모델이 초기화되지 않았습니다.")
             print("음성 인식 중...")
-            result = self.whisper_model.transcribe(audio_file, language="ko", fp16=torch.cuda.is_available())
-            return result["text"]
+            result = self.whisper_model.transcribe(audio_file, language="ko", fp16=torch.cuda.is_available(), word_timestamps=True)
+            return self._format_transcript_with_timestamps(result)
         except Exception as e:
             raise RuntimeError(f"로컬 Whisper 음성 인식 실패: {str(e)}")
 
@@ -96,9 +107,10 @@ class STTService:
             result = mlx_whisper.transcribe(
                 audio_file, 
                 path_or_hf_repo="mlx-community/whisper-large-v3-mlx", 
-                language="ko"
+                language="ko",
+                word_timestamps=True
             )
-            return result["text"]
+            return self._format_transcript_with_timestamps(result)
         except Exception as e:
             raise RuntimeError(f"MLX Whisper 음성 인식 실패: {str(e)}")
 

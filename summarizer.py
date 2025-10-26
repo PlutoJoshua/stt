@@ -41,17 +41,21 @@ class TextSummarizer:
             )
             print(f"로컬 요약 모델이 CPU에 로드되었습니다.")
 
-    def summarize_with_openai(self, text, summary_type="general", context=None):
+    def summarize_with_openai(self, text, summary_type="general", context=None, include_timestamps=False):
         """OpenAI API를 사용한 텍스트 요약"""
         try:
             system_prompts = {
                 "general": "다음 텍스트를 명확하게 요약해주세요.",
                 "meeting": "다음 회의 내용을 자세히 요약해주세요. 주요 논의사항, 결정사항, 액션 아이템을 중심으로 정리해주세요.",
                 "lecture": "다음 강의 내용을 요약해주세요. 핵심 개념, 중요한 설명, 예시를 중심으로 정리해주세요.",
-                "interview": "다음 인터뷰 내용을 요약해주세요. 주요 질문과 답변, 핵심 내용을 중심으로 정리해주세요."
+                "interview": "다음 인터뷰 내용을 요약해주세요. 주요 질문과 답변, 핵심 내용을 중심으로 정리해주세요.",
+                "daily_conversation": "다음은 일상 대화입니다. 대화의 주요 주제와 오고 간 이야기들을 친구에게 말해주듯이 친근한 어조로 요약해주세요."
             }
             instruction = system_prompts.get(summary_type, system_prompts["meeting"])
             
+            if include_timestamps:
+                instruction += "\n\n요약 내용에 원본 텍스트의 타임스탬프를 [시작시간] 형식으로 포함하여, 요약된 내용이 원본 텍스트의 어느 부분에서 나왔는지 명확히 알 수 있도록 해주세요. 예를 들어, [00:01:23] 주요 논의사항... 과 같이 작성해주세요."
+
             system_content = f"{instruction}"
             if context:
                 system_content += f"\n\n[사전 정보]\n{context}"
@@ -69,7 +73,7 @@ class TextSummarizer:
         except Exception as e:
             raise RuntimeError(f"OpenAI 요약 실패: {str(e)}")
 
-    def summarize_with_gemini(self, text, summary_type="general", context=None):
+    def summarize_with_gemini(self, text, summary_type="general", context=None, include_timestamps=False):
         """Gemini API를 사용한 텍스트 요약. 긴 텍스트는 분할 처리합니다."""
         
         # Gemini 1.5 Flash의 컨텍스트 창을 고려하여 보수적인 문자 수 제한 설정
@@ -79,13 +83,13 @@ class TextSummarizer:
         if len(text) < CHAR_LIMIT:
             # 텍스트가 짧으면 Reduce 모델(고성능)로 직접 요약
             print("텍스트가 짧아 직접 요약을 진행합니다.")
-            return self._call_gemini_api(self.gemini_reduce_model, text, summary_type, context)
+            return self._call_gemini_api(self.gemini_reduce_model, text, summary_type, context, include_timestamps=include_timestamps)
         else:
             # 텍스트가 길면 분할하여 요약 (Map-Reduce)
             print(f"텍스트가 너무 깁니다({len(text)}자). 분할하여 요약을 진행합니다.")
-            return self._summarize_long_text_gemini(text, summary_type, context, CHAR_LIMIT)
+            return self._summarize_long_text_gemini(text, summary_type, context, CHAR_LIMIT, include_timestamps=include_timestamps)
 
-    def _summarize_long_text_gemini(self, text, summary_type, context, chunk_size):
+    def _summarize_long_text_gemini(self, text, summary_type, context, chunk_size, include_timestamps=False):
         """긴 텍스트를 Map-Reduce 방식으로 요약합니다."""
         
         # 1. 텍스트 분할 (Map)
@@ -97,7 +101,7 @@ class TextSummarizer:
         for i, chunk in enumerate(text_chunks):
             print(f"[{i+1}/{len(text_chunks)}]번째 조각 요약 중...")
             # Map 단계에서는 Map용 모델 사용
-            summary = self._call_gemini_api(self.gemini_map_model, chunk, summary_type, context, is_chunk=True)
+            summary = self._call_gemini_api(self.gemini_map_model, chunk, summary_type, context, is_chunk=True, include_timestamps=include_timestamps)
             intermediate_summaries.append(summary)
 
         # 3. 요약본들 취합 및 최종 요약 (Reduce)
@@ -105,11 +109,11 @@ class TextSummarizer:
         combined_summaries = "\n\n---\n\n".join(intermediate_summaries)
         
         # Reduce 단계에서는 Reduce용 모델 사용
-        final_summary = self._call_gemini_api(self.gemini_reduce_model, combined_summaries, summary_type, context, is_final=True)
+        final_summary = self._call_gemini_api(self.gemini_reduce_model, combined_summaries, summary_type, context, is_final=True, include_timestamps=include_timestamps)
         
         return final_summary
 
-    def _call_gemini_api(self, model, text, summary_type, context, is_chunk=False, is_final=False):
+    def _call_gemini_api(self, model, text, summary_type, context, is_chunk=False, is_final=False, include_timestamps=False):
         """Gemini API를 직접 호출하는 내부 함수"""
         response = None # Initialize response
         try:
@@ -145,9 +149,17 @@ class TextSummarizer:
 당신은 인터뷰 내용을 전문적으로 요약하는 AI 어시스턴트입니다.
 아래 텍스트는 인터뷰 내용입니다.
 주요 질문과 답변, 대화의 핵심 주제, 그리고 인터뷰에서 드러난 중요한 정보나 견해를 중심으로 매우 상세하고, 길고, 구조적으로 요약해주세요.
-인터뷰의 전체적인 흐름과 맥락이 잘 드러나도록, 사소한 내용도 빠짐없이 최대한 길고 상세하게 작성해주세요. 짧은 요약은 허용되지 않습니다.'''
+인터뷰의 전체적인 흐름과 맥락이 잘 드러나도록, 사소한 내용도 빠짐없이 최대한 길고 상세하게 작성해주세요. 짧은 요약은 허용되지 않습니다.''',
+                    "daily_conversation": '''[요약 지시]
+당신은 일상 대화를 자연스럽게 요약하는 AI 어시스턴트입니다.
+아래 텍스트는 친구나 동료와의 일상적인 대화 내용입니다.
+대화의 핵심 주제와 오고 간 재미있는 이야기들을 중심으로, 친구에게 말해주듯이 친근하고 부드러운 어조로 요약해주세요.
+너무 딱딱하거나 형식적이지 않게, 대화의 분위기를 살리면서 자연스럽게 정리해주세요.'''
                 }
                 instruction = system_prompts.get(summary_type, system_prompts["meeting"])
+
+            if include_timestamps:
+                instruction += "\n\n요약 내용에 원본 텍스트의 타임스탬프를 [시작시간] 형식으로 포함하여, 요약된 내용이 원본 텍스트의 어느 부분에서 나왔는지 명확히 알 수 있도록 해주세요. 예를 들어, [00:01:23] 주요 논의사항... 과 같이 작성해주세요."
 
             prompt_parts = [f"{instruction}"]
             if context:
@@ -205,7 +217,7 @@ class TextSummarizer:
         except Exception as e:
             raise RuntimeError(f"Ollama 요약 실패: {str(e)}")
 
-    def summarize(self, text, summary_type="general", context=None):
+    def summarize(self, text, summary_type="general", context=None, include_timestamps=False):
         """설정된 방법에 따라 텍스트를 요약"""
         if not text or len(text.strip()) < 50:
             return "요약하기에는 텍스트가 너무 짧습니다."
@@ -216,9 +228,9 @@ class TextSummarizer:
         print(f"텍스트 요약 시작 ({self.method})...")
         
         if self.method == 'openai_api':
-            return self.summarize_with_openai(text, summary_type, context)
+            return self.summarize_with_openai(text, summary_type, context, include_timestamps)
         elif self.method == 'gemini_api':
-            return self.summarize_with_gemini(text, summary_type, context)
+            return self.summarize_with_gemini(text, summary_type, context, include_timestamps)
         elif self.method == 'local_model':
             return self.summarize_with_local(text)
         elif self.method == 'ollama':
@@ -226,7 +238,7 @@ class TextSummarizer:
         else:
             raise ValueError(f"지원하지 않는 요약 방법: {self.method}")
 
-    def create_bullet_points(self, text, context=None):
+    def create_bullet_points(self, text, context=None, include_timestamps=False):
         """텍스트를 불릿 포인트 형식으로 요약"""
         self._initialize_client()
         instruction = """[요약 지시]
@@ -241,6 +253,10 @@ class TextSummarizer:
 - **향후 계획 (Action Items):**
 
 전체 내용을 빠짐없이 검토하고, 원본의 맥락을 완벽하게 유지하면서 최대한 길고 상세하게 작성해주세요."""
+        
+        if include_timestamps:
+            instruction += "\n\n요약 내용에 원본 텍스트의 타임스탬프를 [시작시간] 형식으로 포함하여, 요약된 내용이 원본 텍스트의 어느 부분에서 나왔는지 명확히 알 수 있도록 해주세요. 예를 들어, [00:01:23] 주요 논의사항... 과 같이 작성해주세요."
+
         response = None # Initialize response
         
         if self.method == 'openai_api':
@@ -278,7 +294,7 @@ class TextSummarizer:
                     raise RuntimeError(f"Gemini 불릿 포인트 생성 실패: 모델이 생성한 결과가 비어있습니다. Finish Reason: {response.candidates[0].finish_reason}")
                 raise RuntimeError(f"Gemini 불릿 포인트 생성 실패: {str(e)}")
         else:
-            return self.summarize(text, context=context)
+            return self.summarize(text, context=context, include_timestamps=include_timestamps)
 
     def save_summary(self, summary, output_file):
         """요약을 파일로 저장"""

@@ -61,6 +61,7 @@ def run_background_processing(job_id, audio_paths, options):
             context_file=None, # Context file upload not implemented yet
             no_summary=options.get('no_summary', False),
             bullet_points=options.get('bullet_points', False),
+            include_timestamps_in_summary=options.get('include_timestamps_in_summary', False),
             status_callback=status_callback
         )
         jobs[job_id]['result'] = result
@@ -111,6 +112,7 @@ def process():
         "summary_type": request.form.get('summary_type'),
         "no_summary": request.form.get('no_summary') == 'true',
         "bullet_points": request.form.get('bullet_points') == 'true',
+        "include_timestamps_in_summary": request.form.get('include_timestamps_in_summary') == 'true',
     }
 
     job_id = str(uuid.uuid4())
