@@ -81,8 +81,7 @@ def process_file(audio_files, output_dir, stt_method, summarize_method, summary_
 
             final_summarize_method = summarize_method if summarize_method else config.SUMMARIZE_METHOD
             log(f"📋 텍스트 요약 시작 (방법: {final_summarize_method})...")
-            summarizer = get_summarizer()
-            summarizer.method = final_summarize_method
+            summarizer = get_summarizer(final_summarize_method)
             
             if bullet_points:
                 summary = summarizer.create_bullet_points(full_transcript, context=context_text, include_timestamps=include_timestamps_in_summary)

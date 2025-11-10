@@ -37,7 +37,7 @@
 ```
 /
 ├─── app.py               # Flask 웹 애플리케이션
-├─── main.py              # CLI 시작점
+├─── cli.py               # CLI 시작점
 ├─── processor.py         # STT 및 요약을 위한 핵심 처리 로직
 ├─── audio_processor.py   # 오디오 파일 변환 및 처리 담당
 ├─── stt_service.py       # 다양한 STT 서비스(API, 로컬) 관리
@@ -100,34 +100,34 @@ python app.py
 
 **기본 사용법:**
 ```bash
-python main.py process recording.mp3
+python cli.py process recording.mp3
 ```
 
 **고급 옵션:**
 ```bash
 # 출력 디렉토리 지정
-python main.py process recording.mp3 -o ./my_output
+python cli.py process recording.mp3 -o ./my_output
 
 # '회의' 요약 형식 사용
-python main.py process meeting.mp4 -t meeting
+python cli.py process meeting.mp4 -t meeting
 
 # 불릿 포인트 요약 생성
-python main.py process lecture.m4a --bullet-points
+python cli.py process lecture.m4a --bullet-points
 
 # 요약 없이 변환만 수행
-python main.py process interview.wav --no-summary
+python cli.py process interview.wav --no-summary
 
 # STT 방법 지정 (api, local, diarize)
-python main.py process recording.mp3 -s whisper_local_diarize
+python cli.py process recording.mp3 -s whisper_local_diarize
 
 # 요약 방법 지정
-python main.py process recording.mp3 -m gemini_api
+python cli.py process recording.mp3 -m gemini_api
 ```
 
 **시스템 정보 확인:**
 현재 설정 및 사용 가능한 방법을 보려면:
 ```bash
-python main.py info
+python cli.py info
 ```
 
 ## 문제 해결
