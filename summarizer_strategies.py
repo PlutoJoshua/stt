@@ -5,6 +5,7 @@ Summarization 처리를 위한 전략 패턴 구현입니다.
 import openai
 import requests
 import google.generativeai as genai
+from anthropic import Anthropic
 import torch
 from transformers import pipeline
 import config
@@ -147,6 +148,69 @@ class GeminiAPIStrategy(BaseSummarizeStrategy):
         except Exception as e:
             raise RuntimeError(f"Gemini API 호출 실패: {e}")
 
+class ClaudeAPIStrategy(BaseSummarizeStrategy):
+    def __init__(self):
+        super().__init__()
+        if not config.ANTHROPIC_API_KEY:
+            raise ValueError("Anthropic API 키가 설정되지 않았습니다.")
+        self.client = Anthropic(api_key=config.ANTHROPIC_API_KEY)
+        self.model = config.CLAUDE_MODEL
+
+    def summarize(self, text, summary_type, context, include_timestamps):
+        CHAR_LIMIT = 200000
+        if len(text) < CHAR_LIMIT:
+            return self._call_claude_api(text, summary_type, context, include_timestamps=include_timestamps)
+        else:
+            return self._summarize_long_text(text, summary_type, context, CHAR_LIMIT, include_timestamps)
+
+    def create_bullet_points(self, text, context, include_timestamps):
+        return self._call_claude_api(text, "meeting", context, include_timestamps=include_timestamps, is_bullet_points=True)
+
+    def _summarize_long_text(self, text, summary_type, context, chunk_size, include_timestamps):
+        text_chunks = [text[i:i+chunk_size] for i in range(0, len(text), chunk_size)]
+        summaries = [self._call_claude_api(chunk, summary_type, context, is_chunk=True, include_timestamps=include_timestamps) for chunk in text_chunks]
+        combined = "\n\n---\n\n".join(summaries)
+        return self._call_claude_api(combined, summary_type, context, is_final=True, include_timestamps=include_timestamps)
+
+    def _get_prompt(self, summary_type, is_chunk=False, is_final=False, is_bullet_points=False, include_timestamps=False):
+        if is_bullet_points:
+            base_instruction = "당신은 주어진 텍스트의 핵심 내용을 빠짐없이 불릿 포인트(•)로 요약하는 AI 어시스턴트입니다. 각 항목은 명확하고 상세하게 작성해야 합니다."
+        else:
+            prompts = {
+                "general": "다음 텍스트를 내용을 빠뜨리지 말고, 명확하고 상세하게 요약해주세요.",
+                "meeting": "다음 회의 내용을 논의된 모든 사항을 포함하여 자세히 요약해주세요. 주요 논의사항, 결정사항, 액션 아이템을 중심으로 정리해주세요."
+            }
+            base_instruction = prompts.get(summary_type, prompts["meeting"])
+
+        if is_chunk:
+            instruction = f"{base_instruction} 이 텍스트는 긴 내용의 일부입니다. 전체적인 맥락을 고려하여 이 부분의 핵심 내용을 상세히 요약해주세요."
+        elif is_final:
+            instruction = f"다음은 여러 텍스트 조각들의 요약본입니다. 이 요약본들을 종합하여 전체 내용에 대한 최종적이고 완전한 요약본을 생성해주세요. {base_instruction}"
+        else:
+            instruction = base_instruction
+
+        if include_timestamps:
+            instruction += "\n\n요약 내용에 원본 텍스트의 타임스탬프를 [시작시간] 형식으로 포함하여 각 내용이 언급된 시점을 명확히 표시해주세요."
+
+        instruction += "\n\n결과는 반드시 한국어로 작성해주세요."
+        return instruction
+
+    def _call_claude_api(self, text, summary_type, context, is_chunk=False, is_final=False, include_timestamps=False, is_bullet_points=False):
+        instruction = self._get_prompt(summary_type, is_chunk, is_final, is_bullet_points, include_timestamps)
+        context_str = f"\n\n[사전 정보]\n{context}" if context else ""
+        user_content = f"{context_str}\n\n[원본 텍스트]\n{text}"
+
+        try:
+            response = self.client.messages.create(
+                model=self.model,
+                max_tokens=8192,
+                system=instruction,
+                messages=[{"role": "user", "content": user_content}]
+            )
+            return response.content[0].text
+        except Exception as e:
+            raise RuntimeError(f"Claude API 호출 실패: {e}")
+
 class LocalModelStrategy(BaseSummarizeStrategy):
     def __init__(self):
         super().__init__()
@@ -187,6 +251,8 @@ def get_summarize_strategy(method: str) -> BaseSummarizeStrategy:
         return OpenAIAPIStrategy()
     elif method == 'gemini_api':
         return GeminiAPIStrategy()
+    elif method == 'claude_api':
+        return ClaudeAPIStrategy()
     elif method == 'local_model':
         return LocalModelStrategy()
     elif method == 'ollama':
@@ -198,6 +264,7 @@ def get_available_summarize_methods() -> list:
     methods = ['local_model']
     if config.OPENAI_API_KEY: methods.append('openai_api')
     if config.GOOGLE_API_KEY: methods.append('gemini_api')
+    if config.ANTHROPIC_API_KEY: methods.append('claude_api')
     try:
         if requests.get("http://localhost:11434/api/tags", timeout=2).status_code == 200:
             methods.append('ollama')

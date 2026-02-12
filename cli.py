@@ -15,7 +15,7 @@ except Exception:
 try:
     available_summarize_methods = TextSummarizer.get_available_methods()
 except Exception:
-    available_summarize_methods = ['openai_api', 'local_model', 'ollama', 'gemini_api'] # Fallback
+    available_summarize_methods = ['openai_api', 'local_model', 'ollama', 'gemini_api', 'claude_api'] # Fallback
 
 @click.command()
 @click.argument('audio_file', type=click.Path(exists=True))

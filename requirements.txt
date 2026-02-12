@@ -8,6 +8,7 @@ transformers
 torch
 torchaudio
 google-generativeai
+anthropic
 pyannote.audio
 pytorch-lightning
 torchmetrics
