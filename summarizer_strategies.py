@@ -7,6 +7,7 @@ import requests
 import google.generativeai as genai
 from anthropic import Anthropic
 import torch
+import tiktoken
 from transformers import pipeline
 import config
 
@@ -26,11 +27,22 @@ class BaseSummarizeStrategy:
 # --- 2. 구체적인 전략 클래스들 ---
 
 class OpenAIAPIStrategy(BaseSummarizeStrategy):
+    MODEL = "gpt-5.6-terra"
+    CONTEXT_WINDOW_TOKENS = 1_050_000
+    SAFETY_MARGIN_TOKENS = 2048
+    SUMMARY_MAX_TOKENS = 2000
+    BULLET_MAX_TOKENS = 800
+    PARTIAL_MAX_TOKENS = 1200
+
     def __init__(self):
         super().__init__()
         if not config.OPENAI_API_KEY:
             raise ValueError("OpenAI API 키가 설정되지 않았습니다.")
         self.client = openai.OpenAI(api_key=config.OPENAI_API_KEY)
+        try:
+            self.encoding = tiktoken.encoding_for_model(self.MODEL)
+        except KeyError:
+            self.encoding = tiktoken.get_encoding("o200k_base")
 
     def _get_prompt(self, summary_type, include_timestamps, is_bullet_points=False):
         if is_bullet_points:
@@ -48,34 +60,124 @@ class OpenAIAPIStrategy(BaseSummarizeStrategy):
             instruction += "\n\n요약 내용에 원본 텍스트의 타임스탬프를 [시작시간] 형식으로 포함하여..."
         return instruction
 
+    def _count_tokens(self, text):
+        return len(self.encoding.encode(text))
+
+    def _input_budget(self, system_content, completion_tokens):
+        # 메시지 래핑 토큰과 모델별 계산 차이를 고려해 여유 공간을 둡니다.
+        return max(
+            1,
+            self.CONTEXT_WINDOW_TOKENS
+            - completion_tokens
+            - self._count_tokens(system_content)
+            - self.SAFETY_MARGIN_TOKENS,
+        )
+
+    def _split_text_by_tokens(self, text, max_tokens):
+        """가능하면 줄 경계를 유지하면서 텍스트를 토큰 한도 이하로 나눕니다."""
+        if self._count_tokens(text) <= max_tokens:
+            return [text]
+
+        chunks = []
+        current_parts = []
+        current_tokens = 0
+
+        for part in text.splitlines(keepends=True):
+            part_tokens = self.encoding.encode(part)
+
+            if len(part_tokens) > max_tokens:
+                if current_parts:
+                    chunks.append("".join(current_parts))
+                    current_parts = []
+                    current_tokens = 0
+                for start in range(0, len(part_tokens), max_tokens):
+                    chunks.append(self.encoding.decode(part_tokens[start:start + max_tokens]))
+                continue
+
+            if current_parts and current_tokens + len(part_tokens) > max_tokens:
+                chunks.append("".join(current_parts))
+                current_parts = []
+                current_tokens = 0
+
+            current_parts.append(part)
+            current_tokens += len(part_tokens)
+
+        if current_parts:
+            chunks.append("".join(current_parts))
+
+        return [chunk for chunk in chunks if chunk.strip()]
+
+    def _call_chat_completion(self, system_content, text, max_tokens):
+        response = self.client.chat.completions.create(
+            model=self.MODEL,
+            messages=[
+                {"role": "system", "content": system_content},
+                {"role": "user", "content": text},
+            ],
+            max_completion_tokens=max_tokens,
+            reasoning_effort="none",
+        )
+        return response.choices[0].message.content
+
+    def _summarize_with_chunking(self, text, instruction, context, max_tokens):
+        system_content = f"{instruction}\n\n[사전 정보]\n{context}" if context else instruction
+        direct_budget = self._input_budget(system_content, max_tokens)
+
+        if self._count_tokens(text) <= direct_budget:
+            return self._call_chat_completion(system_content, text, max_tokens)
+
+        partial_system = (
+            f"{system_content}\n\n"
+            "[긴 텍스트 부분 요약]\n"
+            "이 입력은 전체 녹취록의 일부입니다. 고유명사, 수치, 결정사항, 액션 아이템과 "
+            "타임스탬프를 보존해 이 부분의 핵심 내용을 빠짐없이 요약하세요."
+        )
+        partial_max_tokens = min(self.PARTIAL_MAX_TOKENS, max_tokens)
+        chunk_budget = self._input_budget(partial_system, partial_max_tokens)
+        chunks = self._split_text_by_tokens(text, chunk_budget)
+        print(f"긴 텍스트를 {len(chunks)}개 청크로 나누어 OpenAI 요약을 진행합니다.")
+
+        partial_summaries = []
+        for index, chunk in enumerate(chunks, start=1):
+            chunk_text = f"[부분 {index}/{len(chunks)}]\n{chunk}"
+            partial_summaries.append(
+                self._call_chat_completion(partial_system, chunk_text, partial_max_tokens)
+            )
+
+        reduce_system = (
+            f"{system_content}\n\n"
+            "[최종 통합]\n"
+            "다음 부분 요약들을 하나의 일관된 최종 요약으로 통합하세요. 중복은 제거하되 "
+            "고유명사, 수치, 결정사항, 액션 아이템과 타임스탬프는 누락하지 마세요."
+        )
+        reduce_budget = self._input_budget(reduce_system, max_tokens)
+        combined = "\n\n--- 부분 요약 ---\n\n".join(partial_summaries)
+
+        # 매우 긴 녹취는 부분 요약 결과도 한도를 넘을 수 있으므로 반복 축약합니다.
+        while self._count_tokens(combined) > reduce_budget:
+            groups = self._split_text_by_tokens(combined, reduce_budget)
+            combined = "\n\n--- 중간 통합 요약 ---\n\n".join(
+                self._call_chat_completion(reduce_system, group, partial_max_tokens)
+                for group in groups
+            )
+
+        return self._call_chat_completion(reduce_system, combined, max_tokens)
+
     def summarize(self, text, summary_type, context, include_timestamps):
         instruction = self._get_prompt(summary_type, include_timestamps)
-        system_content = f"{instruction}\n\n[사전 정보]\n{context}" if context else instruction
         try:
-            response = self.client.chat.completions.create(
-                model="gpt-3.5-turbo",
-                messages=[
-                    {"role": "system", "content": system_content},
-                    {"role": "user", "content": text}
-                ],
-                max_tokens=2000, temperature=0.3
+            return self._summarize_with_chunking(
+                text, instruction, context, self.SUMMARY_MAX_TOKENS
             )
-            return response.choices[0].message.content
         except Exception as e:
             raise RuntimeError(f"OpenAI 요약 실패: {e}")
 
     def create_bullet_points(self, text, context, include_timestamps):
         instruction = self._get_prompt("meeting", include_timestamps, is_bullet_points=True)
-        system_content = f"{instruction}\n\n[사전 정보]\n{context}" if context else instruction
         try:
-            response = self.client.chat.completions.create(
-                model="gpt-3.5-turbo",
-                messages=[
-                    {"role": "system", "content": system_content},
-                    {"role": "user", "content": text}
-                ],
-                max_tokens=800, temperature=0.3)
-            return response.choices[0].message.content
+            return self._summarize_with_chunking(
+                text, instruction, context, self.BULLET_MAX_TOKENS
+            )
         except Exception as e:
             raise RuntimeError(f"OpenAI 불릿 포인트 생성 실패: {e}")
 

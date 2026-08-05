@@ -24,6 +24,7 @@ TestResults.xml
 
 .env
 .env.example
+.venv/
 /stt
 /output
 /uploads

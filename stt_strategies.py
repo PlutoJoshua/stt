@@ -7,7 +7,7 @@ import openai
 import whisper
 import torch
 from pyannote.audio import Pipeline
-from huggingface_hub import HfFolder
+from huggingface_hub import login
 from datetime import timedelta
 import platform
 import config
@@ -121,10 +121,10 @@ class DiarizeWhisperStrategy(BaseSTTStrategy):
         if not config.HUGGING_FACE_TOKEN:
             raise ValueError("Hugging Face 인증 토큰이 설정되지 않았습니다. .env 파일에 HUGGING_FACE_TOKEN을 추가해주세요.")
         
-        HfFolder.save_token(config.HUGGING_FACE_TOKEN)
+        login(token=config.HUGGING_FACE_TOKEN, add_to_git_credential=False)
         
         print(f"Pyannote-audio 화자 분리 파이프라인({diarize_pipeline_name})을 로딩 중...")
-        self.diarization_pipeline = Pipeline.from_pretrained(diarize_pipeline_name, use_auth_token=config.HUGGING_FACE_TOKEN)
+        self.diarization_pipeline = Pipeline.from_pretrained(diarize_pipeline_name, token=config.HUGGING_FACE_TOKEN)
         self.diarization_pipeline.to(device)
         print(f"화자 분리 파이프라인이 {device}에 로드되었습니다.")
 
