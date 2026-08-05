@@ -33,16 +33,24 @@ class BaseSTTStrategy:
         """
         raise NotImplementedError("transcribe() 메소드가 구현되지 않았습니다.")
 
-    def _format_transcript_with_timestamps(self, whisper_results: dict) -> str:
+    @staticmethod
+    def _get_value(value, key, default=None):
+        """딕셔너리와 OpenAI SDK 응답 객체에서 동일하게 값을 읽습니다."""
+        if isinstance(value, dict):
+            return value.get(key, default)
+        return getattr(value, key, default)
+
+    def _format_transcript_with_timestamps(self, whisper_results) -> str:
         """Whisper 결과에서 타임스탬프가 포함된 텍스트를 생성합니다."""
+        segments = self._get_value(whisper_results, 'segments')
+        if not segments:
+            return self._get_value(whisper_results, 'text', '') or ''
+
         final_transcript = ""
-        if 'segments' not in whisper_results:
-            return whisper_results.get('text', '')
-            
-        for segment in whisper_results['segments']:
-            start_time = segment['start']
+        for segment in segments:
+            start_time = self._get_value(segment, 'start', 0)
             start_str = str(timedelta(seconds=round(start_time))).split('.')[0]
-            text = segment['text']
+            text = self._get_value(segment, 'text', '')
             final_transcript += f"[{start_str}] {text.strip()}\n"
         return final_transcript.strip()
 
@@ -74,8 +82,8 @@ class WhisperLocalStrategy(BaseSTTStrategy):
     def __init__(self, model_name="large-v3"):
         super().__init__()
         print(f"로컬 Whisper 모델({model_name})을 로딩 중...")
-        # Forcing CPU to avoid MPS sparse tensor bug
-        device = "cpu"
+        # CUDA는 사용하고, MPS는 Whisper sparse tensor 호환성 때문에 CPU로 폴백합니다.
+        device = "cuda" if torch.cuda.is_available() else "cpu"
         self.whisper_model = whisper.load_model(model_name, device=device)
         print(f"Whisper 모델이 {device}에 로드되었습니다.")
 
@@ -111,8 +119,7 @@ class DiarizeWhisperStrategy(BaseSTTStrategy):
     """화자 분리(Diarization)와 로컬 Whisper를 함께 사용하는 전략"""
     def __init__(self, whisper_model_name="large-v3", diarize_pipeline_name="pyannote/speaker-diarization-3.1"):
         super().__init__()
-        # Forcing CPU for stability
-        device = torch.device("cpu")
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
         print(f"로컬 Whisper 모델({whisper_model_name})을 로딩 중...")
         self.whisper_model = whisper.load_model(whisper_model_name, device=device)
@@ -133,7 +140,12 @@ class DiarizeWhisperStrategy(BaseSTTStrategy):
         diarization = self.diarization_pipeline(audio_file)
 
         print("2/3: 음성 인식 실행 중 (단어 타임스탬프 포함)...")
-        whisper_results = self.whisper_model.transcribe(audio_file, language="ko", word_timestamps=True, fp16=False)
+        whisper_results = self.whisper_model.transcribe(
+            audio_file,
+            language="ko",
+            word_timestamps=True,
+            fp16=torch.cuda.is_available(),
+        )
         
         print("3/3: 결과 결합 중...")
         return self._combine_results(diarization, whisper_results)
@@ -144,7 +156,7 @@ class DiarizeWhisperStrategy(BaseSTTStrategy):
         word_speaker_mapping = []
         for segment in word_segments:
             for word in segment['words']:
-                word_start, word_end = word['start', 'end']
+                word_start, word_end = word['start'], word['end']
                 word_mid_time = word_start + (word_end - word_start) / 2
                 
                 speaker = "UNKNOWN"

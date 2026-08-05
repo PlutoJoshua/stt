@@ -7,7 +7,7 @@ requests
 transformers
 torch
 torchaudio
-google-generativeai
+google-genai>=1.0.0
 anthropic
 pyannote.audio
 pytorch-lightning

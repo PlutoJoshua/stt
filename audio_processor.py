@@ -27,7 +27,7 @@ class AudioProcessor:
     def convert_to_wav(self, input_path, output_path=None, stt_method=None):
         """오디오 파일을 WAV 형식으로 변환"""
         # API를 사용할 때만 파일 크기 검사
-        check_size_flag = True if stt_method == 'whisper_api' else False
+        check_size_flag = stt_method == 'whisper_api'
         self.validate_file(input_path, check_size=check_size_flag)
         
         if output_path is None:
@@ -50,6 +50,17 @@ class AudioProcessor:
             
             # WAV 형식으로 저장
             audio.export(output_path, format="wav")
+
+            # 압축된 입력은 제한 이하여도 변환된 WAV가 API 제한을 넘을 수 있습니다.
+            if check_size_flag:
+                try:
+                    self.validate_file(output_path, check_size=True)
+                except Exception:
+                    try:
+                        os.remove(output_path)
+                    except FileNotFoundError:
+                        pass
+                    raise
             
             print(f"오디오 파일 변환 완료: {output_path}")
             return str(output_path)

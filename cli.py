@@ -40,7 +40,7 @@ def process_audio_command(audio_file, output_dir, summary_type, stt_method, summ
     """음성 파일을 텍스트로 변환하고 요약하는 프로그램"""
     try:
         results = process_file(
-            audio_file=audio_file,
+            audio_files=[audio_file],
             output_dir=output_dir,
             stt_method=stt_method,
             summarize_method=summarize_method,

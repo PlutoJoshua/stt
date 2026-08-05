@@ -11,8 +11,14 @@ STT_METHOD = os.getenv('STT_METHOD', 'whisper_local')
 SUMMARIZE_METHOD = os.getenv('SUMMARIZE_METHOD', 'local_model')
 
 # Gemini 모델 설정
-GEMINI_MODEL_FOR_SUMMARY = os.getenv('MODEL', 'gemini-2.5-flash')
-GEMINI_MODEL_FOR_FINAL_SUMMARY = os.getenv('MODEL', 'gemini-2.5-flash')
+GEMINI_MODEL_FOR_SUMMARY = os.getenv(
+    'GEMINI_MODEL_FOR_SUMMARY',
+    os.getenv('MODEL', 'gemini-2.5-flash'),
+)
+GEMINI_MODEL_FOR_FINAL_SUMMARY = os.getenv(
+    'GEMINI_MODEL_FOR_FINAL_SUMMARY',
+    os.getenv('MODEL', 'gemini-2.5-flash'),
+)
 
 # Claude 모델 설정
 CLAUDE_MODEL = os.getenv('CLAUDE_MODEL', 'claude-opus-4-6')

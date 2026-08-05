@@ -178,12 +178,20 @@
                         return;
                     }
 
+                    if (data.stage && data.stage === 'error') {
+                        addStatusError(data.message || '작업 처리 중 오류가 발생했습니다.');
+                        eventSource.close();
+                        resetSubmitButton();
+                        return;
+                    }
+
                     const item = document.createElement('div');
                     item.className = 'list-group-item';
-                    item.textContent = data.message;
-                    if (data.message.includes('❌')) {
+                    item.textContent = data.message || '';
+                    if ((data.message || '').includes('❌')) {
                         item.classList.add('list-group-item-danger');
                         eventSource.close();
+                        resetSubmitButton();
                     }
                     statusList.appendChild(item);
                 };

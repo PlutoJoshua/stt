@@ -4,12 +4,38 @@ Summarization 처리를 위한 전략 패턴 구현입니다.
 """
 import openai
 import requests
-import google.generativeai as genai
+from google import genai
+from google.genai import types
 from anthropic import Anthropic
 import torch
 import tiktoken
 from transformers import pipeline
 import config
+
+
+SUMMARY_PROMPTS = {
+    "general": "다음 텍스트의 핵심 내용과 중요한 세부사항을 빠뜨리지 말고 명확하게 요약해주세요.",
+    "meeting": "다음 회의 내용을 주요 논의사항, 결정사항, 미해결 쟁점, 담당자와 액션 아이템 중심으로 자세히 정리해주세요.",
+    "lecture": "다음 강의의 주제, 핵심 개념, 근거와 예시를 학습자가 복습하기 좋은 구조로 요약해주세요.",
+    "interview": "다음 인터뷰를 질문과 답변의 흐름, 인터뷰이의 핵심 주장과 중요한 인용 취지를 중심으로 요약해주세요.",
+    "daily_conversation": "다음 대화를 주제별로 정리하고, 중요한 정보와 약속 또는 후속 행동을 빠뜨리지 말고 요약해주세요.",
+}
+
+
+def build_summary_instruction(summary_type, include_timestamps, is_bullet_points=False):
+    instruction = SUMMARY_PROMPTS.get(summary_type, SUMMARY_PROMPTS["general"])
+    if is_bullet_points:
+        instruction += (
+            " 핵심 내용을 불릿 포인트로 작성하고, 각 항목은 하나의 명확한 사실이나 "
+            "결정사항을 담아야 합니다. 관련 하위 내용은 들여쓴 불릿으로 구조화해주세요."
+        )
+    if include_timestamps:
+        instruction += (
+            " 원본에 타임스탬프가 있는 경우 각 핵심 내용에 가장 가까운 타임스탬프를 "
+            "[시작시간] 형식으로 포함해주세요."
+        )
+    return instruction + " 결과는 반드시 한국어로 작성해주세요."
+
 
 # --- 1. 기본 전략 인터페이스 ---
 class BaseSummarizeStrategy:
@@ -45,20 +71,11 @@ class OpenAIAPIStrategy(BaseSummarizeStrategy):
             self.encoding = tiktoken.get_encoding("o200k_base")
 
     def _get_prompt(self, summary_type, include_timestamps, is_bullet_points=False):
-        if is_bullet_points:
-            instruction = """[요약 지시]
-당신은 주어진 텍스트의 핵심 내용을 빠짐없이 불릿 포인트(•)로 요약하는 AI 어시스턴트입니다. ... (이하 생략)"""
-        else:
-            prompts = {
-                "general": "다음 텍스트를 내용을 빠뜨리지 말고, 명확하고 상세하게 요약해주세요.",
-                "meeting": "다음 회의 내용을 논의된 모든 사항을 포함하여 자세히 요약해주세요. 주요 논의사항, 결정사항, 액션 아이템을 중심으로 정리해주세요.",
-                # ... 다른 프롬프트들
-            }
-            instruction = prompts.get(summary_type, prompts["meeting"])
-        
-        if include_timestamps:
-            instruction += "\n\n요약 내용에 원본 텍스트의 타임스탬프를 [시작시간] 형식으로 포함하여..."
-        return instruction
+        return build_summary_instruction(
+            summary_type,
+            include_timestamps,
+            is_bullet_points=is_bullet_points,
+        )
 
     def _count_tokens(self, text):
         return len(self.encoding.encode(text))
@@ -186,11 +203,11 @@ class GeminiAPIStrategy(BaseSummarizeStrategy):
         super().__init__()
         if not config.GOOGLE_API_KEY:
             raise ValueError("Google API 키가 설정되지 않았습니다.")
-        genai.configure(api_key=config.GOOGLE_API_KEY)
-        self.map_model = genai.GenerativeModel(config.GEMINI_MODEL_FOR_SUMMARY)
-        self.reduce_model = genai.GenerativeModel(config.GEMINI_MODEL_FOR_FINAL_SUMMARY)
+        self.client = genai.Client(api_key=config.GOOGLE_API_KEY)
+        self.map_model = config.GEMINI_MODEL_FOR_SUMMARY
+        self.reduce_model = config.GEMINI_MODEL_FOR_FINAL_SUMMARY
         self.safety_settings = [
-            {"category": c, "threshold": "BLOCK_NONE"} for c in 
+            types.SafetySetting(category=c, threshold="BLOCK_NONE") for c in
             ["HARM_CATEGORY_HARASSMENT", "HARM_CATEGORY_HATE_SPEECH", 
              "HARM_CATEGORY_SEXUALLY_EXPLICIT", "HARM_CATEGORY_DANGEROUS_CONTENT"]
         ]
@@ -203,8 +220,6 @@ class GeminiAPIStrategy(BaseSummarizeStrategy):
             return self._summarize_long_text(text, summary_type, context, CHAR_LIMIT, include_timestamps)
 
     def create_bullet_points(self, text, context, include_timestamps):
-        instruction = "... (불릿 포인트용 프롬프트) ..."
-        # ... Gemini 불릿 포인트 로직 구현 ...
         return self._call_gemini_api(self.reduce_model, text, "meeting", context, include_timestamps=include_timestamps, is_bullet_points=True)
 
     def _summarize_long_text(self, text, summary_type, context, chunk_size, include_timestamps):
@@ -215,14 +230,11 @@ class GeminiAPIStrategy(BaseSummarizeStrategy):
 
     def _get_prompt(self, summary_type, is_chunk=False, is_final=False, is_bullet_points=False, include_timestamps=False):
         """요약 유형에 따라 적절한 프롬프트를 반환합니다."""
-        if is_bullet_points:
-            base_instruction = "당신은 주어진 텍스트의 핵심 내용을 빠짐없이 불릿 포인트(•)로 요약하는 AI 어시스턴트입니다. 각 항목은 명확하고 상세하게 작성해야 합니다."
-        else:
-            prompts = {
-                "general": "다음 텍스트를 내용을 빠뜨리지 말고, 명확하고 상세하게 요약해주세요.",
-                "meeting": "다음 회의 내용을 논의된 모든 사항을 포함하여 자세히 요약해주세요. 주요 논의사항, 결정사항, 액션 아이템을 중심으로 정리해주세요."
-            }
-            base_instruction = prompts.get(summary_type, prompts["meeting"])
+        base_instruction = build_summary_instruction(
+            summary_type,
+            include_timestamps,
+            is_bullet_points=is_bullet_points,
+        )
 
         if is_chunk:
             instruction = f"{base_instruction} 이 텍스트는 긴 내용의 일부입니다. 전체적인 맥락을 고려하여 이 부분의 핵심 내용을 상세히 요약해주세요."
@@ -231,11 +243,6 @@ class GeminiAPIStrategy(BaseSummarizeStrategy):
         else:
             instruction = base_instruction
 
-        if include_timestamps:
-            instruction += "\n\n요약 내용에 원본 텍스트의 타임스탬프를 [시작시간] 형식으로 포함하여 각 내용이 언급된 시점을 명확히 표시해주세요."
-
-        # 가장 중요한 부분: 출력 언어를 한국어로 명시
-        instruction += "\n\n결과는 반드시 한국어로 작성해주세요."
         return instruction
 
     def _call_gemini_api(self, model, text, summary_type, context, is_chunk=False, is_final=False, include_timestamps=False, is_bullet_points=False):
@@ -245,7 +252,13 @@ class GeminiAPIStrategy(BaseSummarizeStrategy):
         prompt = f"{instruction}{context_str}\n\n[원본 텍스트]\n{text}"
 
         try:
-            response = model.generate_content(prompt, safety_settings=self.safety_settings)
+            response = self.client.models.generate_content(
+                model=model,
+                contents=prompt,
+                config=types.GenerateContentConfig(
+                    safety_settings=self.safety_settings,
+                ),
+            )
             return response.text
         except Exception as e:
             raise RuntimeError(f"Gemini API 호출 실패: {e}")
@@ -275,14 +288,11 @@ class ClaudeAPIStrategy(BaseSummarizeStrategy):
         return self._call_claude_api(combined, summary_type, context, is_final=True, include_timestamps=include_timestamps)
 
     def _get_prompt(self, summary_type, is_chunk=False, is_final=False, is_bullet_points=False, include_timestamps=False):
-        if is_bullet_points:
-            base_instruction = "당신은 주어진 텍스트의 핵심 내용을 빠짐없이 불릿 포인트(•)로 요약하는 AI 어시스턴트입니다. 각 항목은 명확하고 상세하게 작성해야 합니다."
-        else:
-            prompts = {
-                "general": "다음 텍스트를 내용을 빠뜨리지 말고, 명확하고 상세하게 요약해주세요.",
-                "meeting": "다음 회의 내용을 논의된 모든 사항을 포함하여 자세히 요약해주세요. 주요 논의사항, 결정사항, 액션 아이템을 중심으로 정리해주세요."
-            }
-            base_instruction = prompts.get(summary_type, prompts["meeting"])
+        base_instruction = build_summary_instruction(
+            summary_type,
+            include_timestamps,
+            is_bullet_points=is_bullet_points,
+        )
 
         if is_chunk:
             instruction = f"{base_instruction} 이 텍스트는 긴 내용의 일부입니다. 전체적인 맥락을 고려하여 이 부분의 핵심 내용을 상세히 요약해주세요."
@@ -291,10 +301,6 @@ class ClaudeAPIStrategy(BaseSummarizeStrategy):
         else:
             instruction = base_instruction
 
-        if include_timestamps:
-            instruction += "\n\n요약 내용에 원본 텍스트의 타임스탬프를 [시작시간] 형식으로 포함하여 각 내용이 언급된 시점을 명확히 표시해주세요."
-
-        instruction += "\n\n결과는 반드시 한국어로 작성해주세요."
         return instruction
 
     def _call_claude_api(self, text, summary_type, context, is_chunk=False, is_final=False, include_timestamps=False, is_bullet_points=False):
@@ -316,7 +322,7 @@ class ClaudeAPIStrategy(BaseSummarizeStrategy):
 class LocalModelStrategy(BaseSummarizeStrategy):
     def __init__(self):
         super().__init__()
-        device = -1 # CPU
+        device = 0 if torch.cuda.is_available() else -1
         self.summarizer = pipeline("summarization", model="eenzeenee/t5-small-korean-summarization", device=device)
 
     def summarize(self, text, summary_type, context, include_timestamps):
@@ -339,7 +345,7 @@ class OllamaStrategy(BaseSummarizeStrategy):
         prompt = f"다음 내용을 빠뜨리지 말고 최대한 상세하고 명확하게 한국어로 요약해주세요:\n\n{text}"
         data = {"model": self.model_name, "prompt": prompt, "stream": False}
         try:
-            response = requests.post(self.url, json=data)
+            response = requests.post(self.url, json=data, timeout=(5, 300))
             response.raise_for_status()
             return response.json()['response']
         except requests.exceptions.ConnectionError:
@@ -370,6 +376,6 @@ def get_available_summarize_methods() -> list:
     try:
         if requests.get("http://localhost:11434/api/tags", timeout=2).status_code == 200:
             methods.append('ollama')
-    except:
+    except requests.RequestException:
         pass
     return methods

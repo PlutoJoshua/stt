@@ -46,10 +46,6 @@ class TextSummarizer:
     @staticmethod
     def save_summary(summary: str, output_file: str):
         """요약을 파일로 저장"""
-        try:
-            with open(output_file, 'w', encoding='utf-8') as f:
-                f.write(summary)
-            print(f"요약 저장 완료: {output_file}")
-        except Exception as e:
-            # 실제 프로덕션에서는 로깅하는 것이 좋습니다.
-            print(f"요약 저장 실패: {str(e)}")
+        with open(output_file, 'w', encoding='utf-8') as f:
+            f.write(summary)
+        print(f"요약 저장 완료: {output_file}")

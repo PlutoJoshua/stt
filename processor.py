@@ -1,4 +1,5 @@
 import os
+import uuid
 from pathlib import Path
 from datetime import datetime
 
@@ -28,7 +29,8 @@ def process_file(audio_files, output_dir, stt_method, summarize_method, summary_
         total_duration = 0
         total_size_mb = 0
 
-        stt_service = get_stt_service(stt_method if stt_method else config.STT_METHOD)
+        final_stt_method = stt_method if stt_method else config.STT_METHOD
+        stt_service = get_stt_service(final_stt_method)
         audio_processor = AudioProcessor()
 
         for i, audio_file in enumerate(audio_files):
@@ -39,22 +41,27 @@ def process_file(audio_files, output_dir, stt_method, summarize_method, summary_
             total_size_mb += audio_info['file_size_mb']
             log(f"📊 파일 정보: {audio_info['duration_formatted']}, {audio_info['file_size_mb']:.1f}MB")
 
-            log(f"🔊 오디오를 WAV 형식으로 변환 중...")
-            converted_wav_file = audio_processor.convert_to_wav(audio_file, stt_method=stt_service.method)
-            
-            log(f"✍️ 음성-텍스트 변환 시작 (방법: {stt_service.method})...")
-            transcript = stt_service.transcribe(converted_wav_file)
-            all_transcripts.append(transcript)
-            
-            if os.path.exists(converted_wav_file):
-                os.remove(converted_wav_file)
+            converted_wav_file = None
+            try:
+                log(f"🔊 오디오를 WAV 형식으로 변환 중...")
+                converted_wav_file = audio_processor.convert_to_wav(
+                    audio_file,
+                    stt_method=final_stt_method,
+                )
+
+                log(f"✍️ 음성-텍스트 변환 시작 (방법: {final_stt_method})...")
+                transcript = stt_service.transcribe(converted_wav_file)
+                all_transcripts.append(transcript)
+            finally:
+                if converted_wav_file and os.path.exists(converted_wav_file):
+                    os.remove(converted_wav_file)
             log(f"📝 텍스트 변환 완료.")
 
         # 모든 텍스트를 하나로 합치기
-        full_transcript = "\n\n--- 다음 파일 ---\\n\n".join(all_transcripts)
+        full_transcript = "\n\n--- 다음 파일 ---\n\n".join(all_transcripts)
         
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        base_name = f"combined_{timestamp}"
+        base_name = f"combined_{timestamp}_{uuid.uuid4().hex[:8]}"
         transcript_file = Path(output_dir) / f"{base_name}_transcript.txt"
         summary_file = Path(output_dir) / f"{base_name}_summary.md"
 
@@ -114,4 +121,4 @@ def process_file(audio_files, output_dir, stt_method, summarize_method, summary_
         
     except Exception as e:
         log(f"❌ 오류 발생: {str(e)}")
-        raise e
+        raise

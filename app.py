@@ -9,6 +9,7 @@ from datetime import datetime
 from flask import Flask, request, render_template, jsonify, Response, make_response
 from threading import Thread
 from markdown_it import MarkdownIt
+from werkzeug.utils import secure_filename
 
 from processor import process_file
 from stt_service import STTService
@@ -19,6 +20,8 @@ app = Flask(__name__)
 # --- Redis Connection ---
 # In a production environment, use a configuration file for these settings.
 redis_client = redis.Redis(host=os.getenv('REDIS_HOST', 'localhost'), port=int(os.getenv('REDIS_PORT', 6379)), db=0, decode_responses=True)
+JOB_TTL_SECONDS = int(os.getenv('JOB_TTL_SECONDS', '86400'))
+EVENT_STREAM_MAX_LENGTH = 1000
 
 
 # Ensure the output directory exists
@@ -27,7 +30,27 @@ OUTPUT_FOLDER = 'output'
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 os.makedirs(OUTPUT_FOLDER, exist_ok=True)
 
-md = MarkdownIt()
+md = MarkdownIt("commonmark", {"html": False})
+
+
+def job_key(job_id):
+    return f"job:{job_id}"
+
+
+def event_stream_key(job_id):
+    return f"job_events:{job_id}"
+
+
+def publish_status(job_id, message):
+    """진행 이벤트를 재접속 가능한 Redis Stream에 저장합니다."""
+    stream_key = event_stream_key(job_id)
+    redis_client.xadd(
+        stream_key,
+        {"data": message},
+        maxlen=EVENT_STREAM_MAX_LENGTH,
+        approximate=True,
+    )
+    redis_client.expire(stream_key, JOB_TTL_SECONDS)
 
 @app.route('/')
 def index():
@@ -47,12 +70,12 @@ def index():
                            summarize_methods=summarize_methods)
 
 def run_background_processing(job_id, audio_paths, options):
-    """The function that runs in a background thread and publishes status to Redis."""
+    """백그라운드 작업을 실행하고 진행 상태를 Redis에 저장합니다."""
     
     def status_callback(message):
-        # Publish status messages to the job-specific Redis channel
-        redis_client.publish(f"job_status:{job_id}", message)
+        publish_status(job_id, message)
 
+    succeeded = False
     try:
         result = process_file(
             audio_files=audio_paths,
@@ -68,18 +91,18 @@ def run_background_processing(job_id, audio_paths, options):
         )
         
         # Store the final result in Redis
-        redis_client.hset(f"job:{job_id}", "result", json.dumps(result))
-        redis_client.hset(f"job:{job_id}", "status", "complete")
+        redis_client.hset(job_key(job_id), "result", json.dumps(result))
+        redis_client.hset(job_key(job_id), "status", "complete")
+        succeeded = True
 
     except Exception as e:
-        error_message = f"❌ 오류 발생: {e}"
-        redis_client.hset(f"job:{job_id}", "status", "error")
-        redis_client.hset(f"job:{job_id}", "result", json.dumps({"error": str(e)}))
-        status_callback(error_message)
+        redis_client.hset(job_key(job_id), "status", "error")
+        redis_client.hset(job_key(job_id), "result", json.dumps({"error": str(e)}))
+        status_callback(json.dumps({"stage": "error", "message": str(e)}))
     finally:
         # Record end time and duration
         end_time = time.time()
-        start_time_str = redis_client.hget(f"job:{job_id}", 'start_time')
+        start_time_str = redis_client.hget(job_key(job_id), 'start_time')
         start_time = float(start_time_str) if start_time_str else end_time
         
         duration = end_time - start_time
@@ -87,11 +110,18 @@ def run_background_processing(job_id, audio_paths, options):
         
         duration_formatted = f"{int(minutes)}분 {int(seconds)}초" if minutes >= 1 else f"{int(seconds)}초"
 
-        redis_client.hset(f"job:{job_id}", "end_time", datetime.fromtimestamp(end_time).strftime("%Y-%m-%d %H:%M:%S"))
-        redis_client.hset(f"job:{job_id}", "duration", duration_formatted)
+        redis_client.hset(job_key(job_id), "end_time", datetime.fromtimestamp(end_time).strftime("%Y-%m-%d %H:%M:%S"))
+        redis_client.hset(job_key(job_id), "duration", duration_formatted)
+        redis_client.expire(job_key(job_id), JOB_TTL_SECONDS)
 
-        # Signal completion to the SSE stream
-        status_callback('{"stage": "complete"}')
+        for audio_path in audio_paths:
+            try:
+                os.remove(audio_path)
+            except FileNotFoundError:
+                pass
+
+        if succeeded:
+            status_callback(json.dumps({"stage": "complete"}))
         status_callback("__STREAM_END__")
 
 
@@ -106,11 +136,22 @@ def process():
         return jsonify({"error": "No selected file"}), 400
 
     audio_paths = []
-    for file in files:
-        filename = f"{uuid.uuid4()}_{file.filename}"
-        audio_path = os.path.join(UPLOAD_FOLDER, filename)
-        file.save(audio_path)
-        audio_paths.append(audio_path)
+    try:
+        for file in files:
+            safe_name = secure_filename(file.filename)
+            if not safe_name:
+                raise ValueError("유효하지 않은 파일 이름입니다.")
+            filename = f"{uuid.uuid4()}_{safe_name}"
+            audio_path = os.path.join(UPLOAD_FOLDER, filename)
+            file.save(audio_path)
+            audio_paths.append(audio_path)
+    except Exception as e:
+        for audio_path in audio_paths:
+            try:
+                os.remove(audio_path)
+            except FileNotFoundError:
+                pass
+        return jsonify({"error": str(e)}), 400
 
     # Collect options from form
     options = {
@@ -131,7 +172,8 @@ def process():
         'start_time': start_time,
         'start_time_str': datetime.fromtimestamp(start_time).strftime("%Y-%m-%d %H:%M:%S")
     }
-    redis_client.hset(f"job:{job_id}", mapping=job_data)
+    redis_client.hset(job_key(job_id), mapping=job_data)
+    redis_client.expire(job_key(job_id), JOB_TTL_SECONDS)
 
     # Start the background thread
     thread = Thread(target=run_background_processing, args=(job_id, audio_paths, options))
@@ -141,45 +183,68 @@ def process():
 
 @app.route('/status/<job_id>')
 def status(job_id):
-    """Server-Sent Events stream for status updates using Redis Pub/Sub."""
-    if not redis_client.exists(f"job:{job_id}"):
+    """Redis Stream에 저장된 진행 이벤트를 SSE로 전송합니다."""
+    if not redis_client.exists(job_key(job_id)):
         return jsonify({"error": "Invalid job ID"}), 404
 
+    initial_last_id = request.headers.get('Last-Event-ID', '0-0')
+
     def generate():
-        pubsub = redis_client.pubsub()
-        pubsub.subscribe(f"job_status:{job_id}")
-        
-        for message in pubsub.listen():
-            if message['type'] == 'message':
-                data = message['data']
-                if data == "__STREAM_END__":
-                    break
-                
-                # SSE format: data: {json_string}
+        last_id = initial_last_id
+        stream_key = event_stream_key(job_id)
 
+        while True:
+            try:
+                events = redis_client.xread(
+                    {stream_key: last_id},
+                    count=50,
+                    block=15000,
+                )
+            except redis.exceptions.TimeoutError:
+                # Redis 소켓 제한이 XREAD 대기시간과 같거나 더 짧아도 SSE를 유지합니다.
+                yield ": keep-alive\n\n"
+                continue
+            if not events:
+                yield ": keep-alive\n\n"
+                continue
 
-                try:
-                    # Check if the message is a JSON string
-                    json.loads(data)
-                    formatted_data = data
-                except json.JSONDecodeError:
-                    # If not, wrap it in the standard structure
-                    formatted_data = json.dumps({"message": data})
+            for _, messages in events:
+                for event_id, fields in messages:
+                    last_id = event_id
+                    data = fields.get('data', '')
+                    if data == "__STREAM_END__":
+                        return
 
-                yield f"data: {formatted_data}\n\n"
+                    try:
+                        json.loads(data)
+                        formatted_data = data
+                    except json.JSONDecodeError:
+                        formatted_data = json.dumps({"message": data})
+
+                    yield f"id: {event_id}\ndata: {formatted_data}\n\n"
     
-    return Response(generate(), mimetype='text/event-stream')
+    return Response(
+        generate(),
+        mimetype='text/event-stream',
+        headers={
+            'Cache-Control': 'no-cache',
+            'X-Accel-Buffering': 'no',
+        },
+    )
 
 @app.route('/result/<job_id>')
 def result(job_id):
     """Provides the final result of the processing from Redis."""
-    job_key = f"job:{job_id}"
-    if not redis_client.exists(job_key):
+    redis_job_key = job_key(job_id)
+    if not redis_client.exists(redis_job_key):
         return jsonify({"error": "Invalid or expired job ID"}), 404
 
-    job_info = redis_client.hgetall(job_key)
+    job_info = redis_client.hgetall(redis_job_key)
+    if job_info.get('status') == 'error':
+        result_data = json.loads(job_info.get('result', '{}'))
+        return jsonify({"error": result_data.get('error', 'Job failed')}), 500
     if job_info.get('status') != 'complete':
-        return jsonify({"error": "Job not complete"}), 404
+        return jsonify({"error": "Job not complete"}), 202
 
     result_data_str = job_info.get('result', '{}')
     result_data = json.loads(result_data_str)
